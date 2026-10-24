@@ -386,3 +386,24 @@ body.rt-open { overflow: hidden; }
   background: var(--accent); color: var(--on-accent);
 }
 .rt-tap:active { transform: scale(.98); }
+
+/* 걸음 */
+.activity-card { margin: 12px 0; }
+.act-empty { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  background: var(--card); border-radius: var(--radius); padding: 10px 14px; }
+.act-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left;
+  background: var(--card); border: 0; border-radius: var(--radius); padding: 12px 14px; cursor: pointer;
+  font-variant-numeric: tabular-nums; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+.act-main b { font-size: 18px; }
+.act-kcal { text-align: right; }
+.act-kcal b { font-size: 18px; color: var(--accent); }
+.act-kcal small { display: block; font-size: 11px; color: var(--muted); }
+.btn.wide { width: 100%; }
+textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+  font: inherit; font-size: 16px; margin-top: 4px; resize: vertical; color: inherit; }
+.guide { margin-top: 12px; background: var(--bg); border-radius: 10px; padding: 10px 12px; font-size: 14px; line-height: 1.6; }
+.guide summary { cursor: pointer; font-weight: 600; }
+.guide ol { padding-left: 20px; margin: 8px 0; }
+.guide code { display: block; margin: 4px 0; padding: 6px 8px; background: var(--card); border-radius: 6px;
+  font-size: 12px; word-break: break-all; }
+.guide p { margin: 6px 0 0; }

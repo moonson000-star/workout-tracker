@@ -3,7 +3,7 @@
 const STORAGE_KEY = 'workout-tracker-v1';
 const DEFAULT_SETTINGS = {
   bodyWeight: null, heightCm: null, ageYears: null, sex: null, secPerRep: 3, restSec: 90, volumeCorrection: true, efficiencyPct: 25,
-  timerSound: true, keepAwake: true,
+  timerSound: true, keepAwake: true, stepCalc: 'steps',
 };
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BACKUP_EVERY_DAYS = 7;
@@ -19,6 +19,7 @@ function normalizeState(s) {
       exercises: DEFAULT_EXERCISES.map(e => ({ id: uid(), ...e })),
       logs: {},
       routines: [],
+      activity: {},
       backup: newBackupState(),
       calibVersion: CALIB_VERSION,
     };
@@ -28,6 +29,7 @@ function normalizeState(s) {
     exercises: s.exercises || [],
     logs: s.logs || {},
     routines: s.routines || [],
+    activity: s.activity || {},
     backup: { ...newBackupState(), ...s.backup },
     calibVersion: s.calibVersion || 1,
   };
@@ -72,7 +74,7 @@ applyCalibration(state);
 
 // ---------- 저장 ----------
 // 기기 저장(localStorage)을 기본으로 하고, claude.ai에서 열면 계정 저장소(db)에 동기화
-// db 구조: data/users/<id>/meta (설정·운동목록·루틴), data/users/<id>/log-YYYY-MM (월별 기록)
+// db 구조: data/users/<id>/meta (설정·운동목록·루틴), data/users/<id>/log-YYYY-MM (월별 기록·걸음)
 let cloud = null; // { db, col, ids:Set, writes:{} }
 
 function saveLocal() {
@@ -90,7 +92,7 @@ function save(what) {
     });
   }
   if (what === 'all') {
-    const months = new Set(Object.keys(state.logs).map(d => d.slice(0, 7)));
+    const months = new Set([...Object.keys(state.logs), ...Object.keys(state.activity)].map(d => d.slice(0, 7)));
     months.forEach(m => cloudWrite(`log-${m}`, monthDoc(m)));
     [...cloud.ids].filter(id => id.startsWith('log-') && !months.has(id.slice(4)))
       .forEach(id => cloudWrite(id, null));
@@ -101,15 +103,16 @@ function save(what) {
 }
 
 function monthDoc(m) {
-  const days = {};
+  const days = {}, activity = {};
   for (const [d, list] of Object.entries(state.logs)) if (d.startsWith(m) && list.length) days[d] = list;
-  return { days };
+  for (const [d, a] of Object.entries(state.activity)) if (d.startsWith(m)) activity[d] = a;
+  return { days, activity };
 }
 
 // 문서별로 한 번에 하나씩 순서대로 기록
 function cloudWrite(id, body) {
   const ref = cloud.db.collection(cloud.col).doc(id);
-  const empty = body && body.days && !Object.keys(body.days).length;
+  const empty = body && body.days && !Object.keys(body.days).length && !Object.keys(body.activity || {}).length;
   cloud.writes[id] = (cloud.writes[id] || Promise.resolve())
     .then(() => (body && !empty ? ref.set(body) : ref.delete()))
     .catch(e => {
@@ -134,7 +137,7 @@ async function initCloud() {
       return;
     }
     synced = true;
-    const logs = {};
+    const logs = {}, activity = {};
     for (const d of snap.docs) {
       const body = d.data();
       if (d.id === 'meta') {
@@ -145,9 +148,11 @@ async function initCloud() {
         state.backup = { ...newBackupState(), ...body.backup };
       } else if (d.id.startsWith('log-')) {
         Object.assign(logs, JSON.parse(JSON.stringify(body.days || {})));
+        Object.assign(activity, JSON.parse(JSON.stringify(body.activity || {})));
       }
     }
     state.logs = logs;
+    state.activity = activity;
     if (applyCalibration(state)) save('all');
     else saveLocal();
     render();
@@ -284,17 +289,147 @@ const circuitSummary = c => (c.moves || []).map(m => `${m.name} ${fmt(m.kg, 2)}k
 
 // 기초대사량 + 운동 순소모 (운동 중 어차피 쓰는 기초대사분은 빼서 중복 방지)
 function renderBmrLine(t) {
+  renderActivityCard();
   const bmr = estimateBMR(state.settings);
   $('#bmr-line').classList.toggle('hidden', !bmr);
   if (!bmr) return;
   const net = Math.max(0, t.kcal - (bmr / 1440) * t.minutes);
+  const a = state.activity[currentDate];
+  const walk = a ? activityKcal(a, calcSettings()).kcal : 0;
   $('#bmr-line').innerHTML = `
     <div class="bmr-eq">
       <span><small>기초대사</small><b>${fmt(bmr)}</b></span><i>+</i>
-      <span><small>운동(순)</small><b>${fmt(net)}</b></span><i>=</i>
-      <span class="sum"><small>오늘 소모</small><b>${fmt(bmr + net)}</b></span>
+      <span><small>운동(순)</small><b>${fmt(net)}</b></span><i>+</i>
+      <span><small>걸음</small><b>${a ? fmt(walk) : '–'}</b></span><i>=</i>
+      <span class="sum"><small>오늘 소모</small><b>${fmt(bmr + net + walk)}</b></span>
     </div>
-    <small class="muted">kcal · 출퇴근·집안일 등 일상 활동은 제외</small>`;
+    <small class="muted">kcal · ${a ? '걸음 외 일상 활동(서 있기·집안일 등)은 제외' : '걸음 수를 입력하면 일상 걸음도 더해집니다'}</small>`;
+}
+
+// ---------- 걸음 · 일상 활동 ----------
+// 웹앱은 건강 앱(HealthKit·Health Connect)을 직접 읽을 수 없어서,
+// 단축어가 복사한 텍스트를 붙여넣거나 직접 입력하는 방식으로 가져옴
+const STRIDE_PER_HEIGHT = 0.415; // 보폭 ≈ 키 × 0.415
+const WALK_NET_KCAL_PER_KG_KM = 0.5; // ACSM 걷기 공식의 순산소비용 0.1 ml/kg/m ≈ 0.5 kcal/kg/km
+
+// 걸음 순소모: 건강 앱 활동 에너지를 쓰도록 설정했고 값이 있으면 그 값, 아니면 걸음 수로 계산
+function activityKcal(a, s) {
+  const stride = ((Number(s.heightCm) || 170) * STRIDE_PER_HEIGHT) / 100;
+  const km = ((Number(a.steps) || 0) * stride) / 1000;
+  const fromSteps = WALK_NET_KCAL_PER_KG_KM * (Number(s.bodyWeight) || 70) * km;
+  const useHealth = s.stepCalc === 'health' && Number(a.activeKcal) > 0;
+  return { kcal: useHealth ? Number(a.activeKcal) : fromSteps, km, fromSteps, useHealth };
+}
+
+function renderActivityCard() {
+  const a = state.activity[currentDate];
+  const box = $('#activity-card');
+  if (!a) {
+    box.innerHTML = `<div class="act-empty"><span>🚶 걸음 수</span>
+      <button class="chip" data-act="open">건강 앱에서 가져오기 · 직접 입력</button></div>`;
+    return;
+  }
+  const r = activityKcal(a, calcSettings());
+  box.innerHTML = `<button class="act-row" data-act="open" aria-label="걸음 수 수정">
+    <span class="act-main">🚶 <b>${fmt(a.steps)}</b>걸음 <small class="muted">약 ${fmt(r.km, 1)}km</small></span>
+    <span class="act-kcal"><b>${fmt(r.kcal)}</b> kcal<small>${r.useHealth ? '건강 앱 활동 에너지' : '걸음 기준 순소모'}</small></span>
+  </button>`;
+}
+
+let actDate = null;
+function openActivitySheet() {
+  actDate = currentDate;
+  const a = state.activity[actDate] || {};
+  $('#act-date').textContent = actDate;
+  $('#act-steps').value = a.steps ?? '';
+  $('#act-kcal').value = a.activeKcal ?? '';
+  $('#act-paste').value = '';
+  $('#act-delete').classList.toggle('hidden', !state.activity[actDate]);
+  updateActivityPreview();
+  openSheet('#activity-sheet');
+}
+
+function updateActivityPreview() {
+  const a = { steps: Number($('#act-steps').value) || 0, activeKcal: Number($('#act-kcal').value) || 0 };
+  const r = activityKcal(a, calcSettings());
+  $('#act-preview').innerHTML = a.steps || a.activeKcal
+    ? `걸음 기준 순소모 <b>${fmt(r.fromSteps)} kcal</b> (약 ${fmt(r.km, 1)}km)${a.activeKcal ? ` · 건강 앱 활동 에너지 ${fmt(a.activeKcal)} kcal` : ''}<br>
+       <small>오늘 소모에는 <b>${r.useHealth ? '건강 앱 활동 에너지' : '걸음 기준 값'}</b>을 사용합니다 (설정에서 변경)</small>`
+    : '';
+}
+
+// 단축어 결과 예: "wt;date=2026-10-24;steps=8234;kcal=312.5" (순서·구분자 무관, 쉼표 허용)
+function parseHealthText(text) {
+  const t = String(text || '').replace(/(\d),(?=\d{3})/g, '$1');
+  const num = keys => {
+    const m = t.match(new RegExp(`(?:${keys})\\s*[=:]\\s*([\\d.]+)`, 'i'));
+    return m ? Number(m[1]) : null;
+  };
+  const d = t.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+  return {
+    date: d ? ymd(new Date(Number(d[1]), Number(d[2]) - 1, Number(d[3]))) : null,
+    steps: num('steps|걸음'),
+    kcal: num('kcal|칼로리|에너지|energy'),
+  };
+}
+
+function applyHealthText(text) {
+  const r = parseHealthText(text);
+  if (r.steps == null && r.kcal == null) {
+    toast('걸음 수를 찾지 못했습니다. 단축어 결과를 그대로 붙여넣어 주세요');
+    return false;
+  }
+  if (r.date) { actDate = r.date; $('#act-date').textContent = actDate; }
+  if (r.steps != null) $('#act-steps').value = Math.round(r.steps);
+  if (r.kcal != null) $('#act-kcal').value = Math.round(r.kcal);
+  updateActivityPreview();
+  return true;
+}
+
+async function pasteFromClipboard() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (applyHealthText(text)) toast('클립보드에서 가져왔습니다. 확인 후 저장하세요');
+  } catch (e) {
+    toast('클립보드를 읽을 수 없습니다. 아래 칸을 길게 눌러 붙여넣으세요');
+    $('#act-paste').focus();
+  }
+}
+
+function saveActivity() {
+  const steps = Number($('#act-steps').value) || 0;
+  const activeKcal = Number($('#act-kcal').value) || 0;
+  if (!steps && !activeKcal) return toast('걸음 수를 입력하세요');
+  state.activity[actDate] = { steps, activeKcal: activeKcal || null, at: Date.now() };
+  save(actDate);
+  currentDate = actDate;
+  closeSheets();
+  renderDay();
+  toast('걸음 수를 저장했습니다');
+}
+
+async function deleteActivity() {
+  if (!await ask('이 날의 걸음 기록을 삭제할까요?')) return;
+  delete state.activity[actDate];
+  save(actDate);
+  closeSheets();
+  renderDay();
+}
+
+// 주소로 넘겨받기 (안드로이드 자동화 앱 등): ?steps=8234&kcal=312&date=2026-10-24
+function importActivityFromUrl() {
+  let params;
+  try { params = new URLSearchParams(location.search); } catch (e) { return; }
+  if (!params.has('steps') && !params.has('kcal')) return;
+  const r = parseHealthText(`steps=${params.get('steps') || ''};kcal=${params.get('kcal') || ''};${params.get('date') || ''}`);
+  const date = r.date || ymd(new Date());
+  if (r.steps != null || r.kcal != null) {
+    state.activity[date] = { steps: r.steps || 0, activeKcal: r.kcal || null, at: Date.now() };
+    save(date);
+    currentDate = date;
+    toast(`${date} 걸음 ${fmt(r.steps || 0)}보를 가져왔습니다`);
+  }
+  try { history.replaceState(null, '', location.pathname); } catch (e) { /* 주소 정리 불가 */ }
 }
 
 // 연속된 동일 세트를 묶어서 "60kg × 10회 × 3세트" 형태로 표시
@@ -663,6 +798,7 @@ function renderSettings() {
   f.sex.value = s.sex || '';
   f.timerSound.checked = s.timerSound;
   f.keepAwake.checked = s.keepAwake;
+  f.stepCalc.value = s.stepCalc || 'steps';
   renderWakeStatus();
   f.secPerRep.value = s.secPerRep;
   f.restSec.value = s.restSec;
@@ -680,6 +816,7 @@ function saveSettings(ev) {
     sex: f.sex.value || null,
     timerSound: f.timerSound.checked,
     keepAwake: f.keepAwake.checked,
+    stepCalc: f.stepCalc.value,
     secPerRep: Number(f.secPerRep.value) || DEFAULT_SETTINGS.secPerRep,
     restSec: Number(f.restSec.value) >= 0 ? Number(f.restSec.value) : DEFAULT_SETTINGS.restSec,
     volumeCorrection: f.volumeCorrection.checked,
@@ -1630,12 +1767,21 @@ $('#rt-log').onclick = logRoundTimer;
 $('#rt-again').onclick = () => { rt = null; showRtPanel('setup'); renderRtSetup(); };
 $('#c-delete').onclick = deleteCircuit;
 
+$('#activity-card').onclick = ev => { if (ev.target.closest('[data-act]')) openActivitySheet(); };
+$('#act-clip').onclick = pasteFromClipboard;
+$('#act-paste').oninput = ev => { if (ev.target.value.trim()) applyHealthText(ev.target.value); };
+$('#act-steps').oninput = updateActivityPreview;
+$('#act-kcal').oninput = updateActivityPreview;
+$('#act-save').onclick = saveActivity;
+$('#act-delete').onclick = deleteActivity;
+
 $('#settings-form').onsubmit = saveSettings;
 $('#export-btn').onclick = exportJson;
 $('#csv-btn').onclick = exportCsv;
 $('#import-input').onchange = importJson;
 $('#reset-btn').onclick = resetAll;
 
+importActivityFromUrl();
 render();
 initCloud();
 

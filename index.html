@@ -42,6 +42,7 @@
 
       <div class="summary card" id="day-summary"></div>
       <div class="bmr card hidden" id="bmr-line"></div>
+      <div class="activity-card" id="activity-card"></div>
       <div id="weight-banner" class="banner hidden">
         정확한 칼로리 추정을 위해 <b>설정</b>에서 체중을 입력해주세요.
       </div>
@@ -121,6 +122,13 @@
         <label>세트 간 휴식 (초) <small>휴식 타이머 기본값</small><input type="number" name="restSec" inputmode="numeric" step="5" min="0" max="600"></label>
         <label class="row">휴식 끝 알림음 · 진동<input type="checkbox" name="timerSound"></label>
         <label class="row">앱 사용 중 화면 꺼짐 방지<input type="checkbox" name="keepAwake"></label>
+        <label>걸음 칼로리 계산
+          <select name="stepCalc">
+            <option value="steps">걸음 수로 계산 (추천 · 운동 기록과 중복 없음)</option>
+            <option value="health">건강 앱 활동 에너지 사용</option>
+          </select>
+        </label>
+        <p class="muted small">애플워치로 운동을 기록한다면 건강 앱 활동 에너지에 그 운동도 포함되어, 이 앱의 운동 기록과 이중으로 더해질 수 있습니다.</p>
         <p class="muted small" id="wake-status"></p>
         <label class="row">중량(볼륨) 보정 사용<input type="checkbox" name="volumeCorrection"></label>
         <label>근육 효율 (%) <small>보정 계산용, 기본 25</small><input type="number" name="efficiencyPct" inputmode="numeric" step="1" min="10" max="40"></label>
@@ -154,6 +162,9 @@
           · 한쪽씩 하는 운동(런지, 원암 로우 등)은 <b>한쪽 횟수</b>를 입력합니다. 앱이 양쪽으로 계산합니다.</p>
         <p><b>서킷 · 타바타</b><br>
           kcal = 서킷 MET(고강도 8.0 / 중강도 4.3) × 체중 × 총 시간 + 라운드 전체 동작의 중량 보정</p>
+        <p><b>걸음</b><br>
+          걸음 순소모 = 0.5 kcal × 체중(kg) × 걸은 거리(km), 거리 = 걸음 수 × 보폭(키 × 0.415).
+          ACSM 걷기 공식의 순소모값으로, 기초대사와 겹치지 않습니다.</p>
         <p><b>기초대사량</b><br>
           Mifflin-St Jeor 공식: 10×체중 + 6.25×키 − 5×나이 + (남 5 / 여 −161).
           오늘 소모 = 기초대사 + 운동 순소모 (운동 시간 동안의 기초대사분을 빼서 중복 계산 방지)</p>
@@ -348,6 +359,40 @@
       <button class="btn primary big" id="rt-log">서킷으로 기록하기</button>
       <button class="btn big" id="rt-again">다시 설정</button>
     </div>
+  </div>
+
+  <!-- 바텀시트: 걸음 · 활동 -->
+  <div class="sheet hidden" id="activity-sheet" role="dialog" aria-label="걸음 수 가져오기">
+    <div class="sheet-head"><h2>걸음 · 활동 칼로리</h2><button class="icon-btn close-sheet" aria-label="닫기">✕</button></div>
+    <p class="muted small">날짜 <b id="act-date"></b></p>
+    <button class="btn primary big wide" id="act-clip">📋 단축어 결과 가져오기 (클립보드)</button>
+    <label class="field">또는 여기에 붙여넣기<textarea id="act-paste" rows="2" placeholder="wt;date=2026-10-24;steps=8234;kcal=312"></textarea></label>
+    <div class="two">
+      <label class="field">걸음 수<input type="number" id="act-steps" inputmode="numeric" min="0" max="200000"></label>
+      <label class="field">활동 에너지 (kcal, 선택)<input type="number" id="act-kcal" inputmode="numeric" min="0" max="10000"></label>
+    </div>
+    <div class="estimate" id="act-preview"></div>
+    <div class="btn-row">
+      <button class="btn danger hidden" id="act-delete">삭제</button>
+      <button class="btn primary grow" id="act-save">저장</button>
+    </div>
+    <details class="guide">
+      <summary>아이폰 단축어 만들기 (처음 한 번만)</summary>
+      <ol>
+        <li><b>단축어</b> 앱 → 오른쪽 위 <b>＋</b> → 이름을 "운동기록 걸음"으로 지정</li>
+        <li>동작 추가 → <b>건강 샘플 찾기</b>
+          <br>· 유형: <b>걸음</b> · 필터: <b>시작 날짜</b>가 <b>오늘</b> · 그룹화 기준: <b>일</b></li>
+        <li>동작 추가 → <b>통계 계산</b> → <b>합계</b> (입력: 위의 건강 샘플)</li>
+        <li>2~3번을 한 번 더: 유형만 <b>활동 에너지</b>로 바꿔서 추가 (선택)</li>
+        <li>동작 추가 → <b>텍스트</b>에 아래처럼 입력하고, 괄호 부분은 변수로 넣기
+          <code>wt;date=[현재 날짜];steps=[걸음 합계];kcal=[활동 에너지 합계]</code>
+          · 현재 날짜 형식: 사용자 설정 <b>yyyy-MM-dd</b></li>
+        <li>동작 추가 → <b>클립보드에 복사</b></li>
+        <li>처음 실행할 때 <b>건강 데이터 읽기 허용</b>을 눌러주세요</li>
+      </ol>
+      <p>사용: 단축어 실행(위젯·뒷면 탭에 등록하면 편리) → 이 앱 열기 → <b>📋 단축어 결과 가져오기</b> → 저장.
+        <br>자동화 탭에서 "매일 밤 9시"에 이 단축어를 실행하도록 설정할 수도 있습니다.</p>
+    </details>
   </div>
 
   <div class="toast hidden" id="toast"></div>
