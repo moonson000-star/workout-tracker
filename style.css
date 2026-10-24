@@ -329,3 +329,26 @@ input[type=number], input[type=text], select {
 .timer.done button { color: var(--on-accent); }
 @keyframes pulse { 50% { transform: translateX(-50%) scale(1.06); } }
 @media (prefers-reduced-motion: reduce) { .timer.done { animation: none; } }
+
+/* 기초대사 + 운동 */
+.bmr { padding: 10px 14px; }
+.bmr-eq { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-variant-numeric: tabular-nums; }
+.bmr-eq span { display: flex; flex-direction: column; align-items: center; }
+.bmr-eq small { font-size: 11px; color: var(--muted); }
+.bmr-eq b { font-size: 17px; }
+.bmr-eq .sum b { color: var(--accent); }
+.bmr-eq i { font-style: normal; color: var(--muted); }
+
+/* 입력 안내 */
+.hint { color: var(--accent); margin: 4px 0; }
+.hint:empty { display: none; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.field-title { margin: 12px 0 4px; font-size: 14px; font-weight: 600; }
+
+/* 서킷 */
+.circuit-pick { background: var(--accent-soft); border-radius: 10px; padding: 12px !important; margin-bottom: 6px; border-bottom: 0 !important; }
+.moves .move-cell { width: auto; text-align: left !important; color: var(--text) !important; }
+.moves .move-cell select { margin: 0; font-size: 14px; padding: 8px; }
+.moves .move-cell small { display: block; font-size: 11px; margin-top: 2px; }
+.moves td:nth-child(2), .moves td:nth-child(3) { width: 64px; }
+.moves td:first-child { width: auto; }

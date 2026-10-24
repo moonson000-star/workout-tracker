@@ -2,8 +2,8 @@
 
 const STORAGE_KEY = 'workout-tracker-v1';
 const DEFAULT_SETTINGS = {
-  bodyWeight: null, heightCm: null, secPerRep: 3, restSec: 90, volumeCorrection: true, efficiencyPct: 25,
-  timerSound: true,
+  bodyWeight: null, heightCm: null, ageYears: null, sex: null, secPerRep: 3, restSec: 90, volumeCorrection: true, efficiencyPct: 25,
+  timerSound: true, keepAwake: true,
 };
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BACKUP_EVERY_DAYS = 7;
@@ -34,15 +34,21 @@ function normalizeState(s) {
 }
 
 // 기본 운동의 계수가 바뀌면 운동 목록과 지난 기록에 반영 (이름이 같은 기본 운동만)
+// 버전 3에서는 기본 목록을 홈트레이닝용으로 교체 (직접 추가한 운동은 유지)
+// 지난 기록은 계수(MET·이동거리)만 갱신하고, 무게 입력 방식(dbs·sides)은 바꾸지 않음
 function applyCalibration(s) {
   if (s.calibVersion >= CALIB_VERSION) return false;
   const byName = Object.fromEntries(DEFAULT_EXERCISES.map(e => [e.name, e]));
-  s.exercises = s.exercises.map(e => {
-    const d = byName[e.name];
-    return d && d.type === e.type
-      ? { ...e, met: d.met, rom: d.rom, bwFactor: d.bwFactor, refRatio: d.refRatio, src: d.src }
-      : e;
-  });
+  if (s.calibVersion < 3) {
+    const idByName = Object.fromEntries(s.exercises.map(e => [e.name, e.id]));
+    const custom = s.exercises.filter(e => !LEGACY_DEFAULT_NAMES.includes(e.name) && !byName[e.name]);
+    s.exercises = [...DEFAULT_EXERCISES.map(d => ({ id: idByName[d.name] || uid(), ...d })), ...custom];
+  } else {
+    s.exercises = s.exercises.map(e => {
+      const d = byName[e.name];
+      return d && d.type === e.type ? { ...e, ...d, id: e.id } : e;
+    });
+  }
   for (const list of Object.values(s.logs)) {
     list.forEach((en, i) => {
       const d = byName[en.name];
@@ -230,6 +236,7 @@ function renderDay() {
     <div><b>${fmt(t.volume)}</b><span>볼륨 kg</span></div>
     <div><b>${fmt(t.sets)}</b><span>세트</span></div>
     <div><b>${fmt(t.minutes)}</b><span>분(추정)</span></div>`;
+  renderBmrLine(t);
 
   const entries = state.logs[currentDate] || [];
   $('#day-empty').classList.toggle('hidden', entries.length > 0);
@@ -242,11 +249,14 @@ function renderDay() {
     let detail;
     if (e.type === 'time') {
       detail = `<span class="set-chip">${fmt(e.minutes, 1)}분${e.km ? ` · ${fmt(e.km, 2)}km` : ''}</span>`;
+    } else if (e.type === 'circuit') {
+      detail = `<span class="set-chip done">${e.rounds}라운드 · ${fmt(e.minutes, 1)}분</span>` +
+        (e.moves || []).map(m => `<span class="set-chip">${esc(m.name)} ${setLabel(m, m.kg, m.reps)}</span>`).join('');
     } else {
       const done = e.sets.filter(x => x.done).length;
       detail = (done ? `<span class="set-chip done">✓ ${done}/${e.sets.length}</span>` : '') +
         groupSets(e.sets).map(g =>
-          `<span class="set-chip">${fmt(g.kg, 2)}kg × ${g.reps}회${g.count > 1 ? ` × ${g.count}세트` : ''}</span>`).join('');
+          `<span class="set-chip">${setLabel(e, g.kg, g.reps)}${g.count > 1 ? ` × ${g.count}세트` : ''}</span>`).join('');
     }
     return `<li class="entry card" data-id="${e.id}">
       <div class="entry-head">
@@ -257,6 +267,34 @@ function renderDay() {
       ${e.note ? `<div class="note">${esc(e.note)}</div>` : ''}
     </li>`;
   }).join('');
+}
+
+// 기록에 복사해 두는 운동 계수 (운동 목록을 나중에 바꿔도 지난 기록은 그대로)
+const exParams = ex => ({
+  name: ex.name, cat: ex.cat, type: ex.type, met: ex.met, rom: ex.rom || 0,
+  bwFactor: ex.bwFactor || 0, dbs: ex.dbs || 1, sides: ex.sides || 1,
+});
+
+// "12kg×2 × 10회(한쪽)" — kg은 기구 1개, 양손이면 ×2 표시
+function setLabel(e, kg, reps) {
+  return `${fmt(kg, 2)}kg${(e.dbs || 1) === 2 ? '×2' : ''} × ${reps}회${(e.sides || 1) === 2 ? '(한쪽)' : ''}`;
+}
+
+const circuitSummary = c => (c.moves || []).map(m => `${m.name} ${fmt(m.kg, 2)}kg×${m.reps}`).join(' · ');
+
+// 기초대사량 + 운동 순소모 (운동 중 어차피 쓰는 기초대사분은 빼서 중복 방지)
+function renderBmrLine(t) {
+  const bmr = estimateBMR(state.settings);
+  $('#bmr-line').classList.toggle('hidden', !bmr);
+  if (!bmr) return;
+  const net = Math.max(0, t.kcal - (bmr / 1440) * t.minutes);
+  $('#bmr-line').innerHTML = `
+    <div class="bmr-eq">
+      <span><small>기초대사</small><b>${fmt(bmr)}</b></span><i>+</i>
+      <span><small>운동(순)</small><b>${fmt(net)}</b></span><i>=</i>
+      <span class="sum"><small>오늘 소모</small><b>${fmt(bmr + net)}</b></span>
+    </div>
+    <small class="muted">kcal · 출퇴근·집안일 등 일상 활동은 제외</small>`;
 }
 
 // 연속된 동일 세트를 묶어서 "60kg × 10회 × 3세트" 형태로 표시
@@ -278,7 +316,7 @@ function openSheet(id) {
 }
 function closeSheets() {
   const inRoutineChild = editorMode === 'routine' &&
-    (!$('#pick-sheet').classList.contains('hidden') || !$('#entry-sheet').classList.contains('hidden'));
+    ['#pick-sheet', '#entry-sheet', '#circuit-sheet'].some(id => !$(id).classList.contains('hidden'));
   document.querySelectorAll('.sheet').forEach(s => s.classList.add('hidden'));
   if (inRoutineChild) { backToRoutineSheet(); return; }
   editorMode = 'log';
@@ -313,9 +351,9 @@ function previewKcal(ex) {
   const last = lastEntryFor(ex.id, '9999-12-31');
   const kg = last
     ? Math.max(0, ...last.entry.sets.map(x => Number(x.kg) || 0))
-    : Math.round(((ex.refRatio || 0) * s.bodyWeight) / 2.5) * 2.5;
+    : (ex.refKg ?? Math.round(((ex.refRatio || 0) * s.bodyWeight) / 2.5) * 2.5);
   const kcal = estimateEntry({ ...ex, sets: [{ kg, reps: 10 }] }, s).total;
-  return { kcal, label: `${kg ? `${fmt(kg, 1)}kg` : '맨몸'} × 10회${last ? ' (최근)' : ''}` };
+  return { kcal, label: `${kg ? setLabel(ex, kg, 10) : `맨몸 × 10회${(ex.sides || 1) === 2 ? '(한쪽)' : ''}`}${last ? ' (최근)' : ''}` };
 }
 
 // 운동 선택 시트
@@ -325,7 +363,9 @@ function renderPickList() {
   const list = filterExercises($('#pick-search').value, pickCat);
   const recent = recentExerciseIds();
   list.sort((a, b) => (recent.indexOf(a.id) + 1 || 999) - (recent.indexOf(b.id) + 1 || 999));
-  $('#pick-list').innerHTML = list.map(e => `
+  $('#pick-list').innerHTML = `
+    <li data-circuit="1" class="circuit-pick"><div><b>⚡ 서킷 · 타바타</b><br>
+    <small class="muted">여러 동작을 1라운드로 묶고, 라운드 수와 총 시간으로 기록</small></div></li>` + list.map(e => `
     <li data-id="${e.id}"><div><span class="cat-tag">${esc(e.cat)}</span>${esc(e.name)}
     ${recent.includes(e.id) ? '<small class="muted">최근</small>' : ''}</div>
     <small class="muted nowrap">≈${fmt(previewKcal(e).kcal, 1)} kcal</small></li>`).join('')
@@ -335,7 +375,7 @@ function renderPickList() {
 function recentExerciseIds() {
   const ids = [];
   for (const date of Object.keys(state.logs).sort().reverse()) {
-    for (const e of state.logs[date]) if (!ids.includes(e.exId)) ids.push(e.exId);
+    for (const e of state.logs[date]) if (e.exId && !ids.includes(e.exId)) ids.push(e.exId);
     if (ids.length >= 8) break;
   }
   return ids;
@@ -367,6 +407,11 @@ function openEntryEditor(entry, isNew) {
   $('#strength-form').classList.toggle('hidden', isTime);
   $('#time-form').classList.toggle('hidden', !isTime);
 
+  const hints = [];
+  if (!isTime && (draft.dbs || 1) === 2) hints.push('kg은 덤벨 1개 무게 (양손 ×2 자동 계산)');
+  else if (!isTime && draft.bwFactor < 1) hints.push('kg은 덤벨·케틀벨 1개 무게');
+  if (!isTime && (draft.sides || 1) === 2) hints.push('회는 한쪽 기준 (양쪽 ×2 자동 계산)');
+  $('#entry-hint').textContent = hints.join(' · ');
   if (isTime) {
     $('#t-minutes').value = draft.minutes || '';
     $('#t-km').value = draft.km || '';
@@ -542,7 +587,7 @@ function renderExerciseManage() {
     <li data-id="${e.id}" class="ex-row">
       <div class="ex-main">
         <div><span class="cat-tag">${esc(e.cat)}</span>${esc(e.name)}</div>
-        <small class="muted">${esc(p.label)} · MET ${e.met}${e.type === 'time' ? '' : ` · ROM ${e.rom ?? 0}m${e.bwFactor ? ` · 체중×${e.bwFactor}` : ''}`}</small>
+        <small class="muted">${esc(p.label)} · MET ${e.met}${e.type === 'time' ? '' : ` · ROM ${e.rom ?? 0}m${e.bwFactor ? ` · 체중×${e.bwFactor}` : ''}`}${(e.dbs || 1) === 2 ? ' · 양손' : ''}${(e.sides || 1) === 2 ? ' · 한쪽씩' : ''}</small>
         <small class="src">${esc(e.src || '직접 입력')}</small>
         ${e.type === 'strength' ? `<div class="meter"><i style="width:${Math.min(100, (p.kcal / max) * 100)}%"></i></div>` : ''}
       </div>
@@ -560,6 +605,8 @@ function openExerciseEditor(ex) {
   f.met.value = ex ? ex.met : 4.0;
   f.rom.value = ex ? (ex.rom ?? 0.4) : 0.4;
   f.bwFactor.value = ex ? (ex.bwFactor ?? 0) : 0;
+  f.dbs.value = String(ex ? (ex.dbs || 1) : 1);
+  f.sides.checked = ex ? (ex.sides || 1) === 2 : false;
   $('#ex-sheet-title').textContent = ex ? '운동 수정' : '운동 추가';
   $('#ex-src').textContent = ex ? `근거 · ${ex.src || '직접 입력'}` : '';
   $('#ex-delete').classList.toggle('hidden', !ex);
@@ -580,13 +627,15 @@ function saveExercise(ev) {
   if (data.type === 'strength') {
     data.rom = Number(f.rom.value) || 0;
     data.bwFactor = Number(f.bwFactor.value) || 0;
+    data.dbs = Number(f.dbs.value) || 1;
+    data.sides = f.sides.checked ? 2 : 1;
   }
   if (!data.name) return;
   if (state.exercises.some(e => e.name === data.name && e.id !== editingExId)) return toast('같은 이름의 운동이 있습니다');
   if (editingExId) {
     const i = state.exercises.findIndex(e => e.id === editingExId);
     const old = state.exercises[i];
-    const changed = ['met', 'rom', 'bwFactor'].some(k => (old[k] || 0) !== (data[k] || 0));
+    const changed = ['met', 'rom', 'bwFactor', 'dbs', 'sides'].some(k => (old[k] || 0) !== (data[k] || 0));
     state.exercises[i] = { ...old, ...data, src: changed ? '직접 입력' : old.src };
   } else {
     state.exercises.push({ id: uid(), ...data, src: '직접 입력' });
@@ -610,7 +659,11 @@ function renderSettings() {
   const f = $('#settings-form'), s = state.settings;
   f.bodyWeight.value = s.bodyWeight ?? '';
   f.heightCm.value = s.heightCm ?? '';
+  f.ageYears.value = s.ageYears ?? '';
+  f.sex.value = s.sex || '';
   f.timerSound.checked = s.timerSound;
+  f.keepAwake.checked = s.keepAwake;
+  renderWakeStatus();
   f.secPerRep.value = s.secPerRep;
   f.restSec.value = s.restSec;
   f.volumeCorrection.checked = s.volumeCorrection;
@@ -623,13 +676,19 @@ function saveSettings(ev) {
   state.settings = {
     bodyWeight: Number(f.bodyWeight.value) || null,
     heightCm: Number(f.heightCm.value) || null,
+    ageYears: Number(f.ageYears.value) || null,
+    sex: f.sex.value || null,
     timerSound: f.timerSound.checked,
+    keepAwake: f.keepAwake.checked,
     secPerRep: Number(f.secPerRep.value) || DEFAULT_SETTINGS.secPerRep,
     restSec: Number(f.restSec.value) >= 0 ? Number(f.restSec.value) : DEFAULT_SETTINGS.restSec,
     volumeCorrection: f.volumeCorrection.checked,
     efficiencyPct: Number(f.efficiencyPct.value) || DEFAULT_SETTINGS.efficiencyPct,
   };
   save('meta');
+  if (state.settings.keepAwake) keepScreenOn();
+  else releaseScreen();
+  renderBmrLine(dayTotals(currentDate));
   toast('설정을 저장했습니다');
 }
 
@@ -694,6 +753,7 @@ function exportCsv() {
     for (const e of state.logs[date]) {
       const kcal = estimateEntry(e, s).total.toFixed(1);
       if (e.type === 'time') rows.push([date, e.cat, e.name, '', '', '', e.minutes, e.km || '', kcal, e.note || '']);
+      else if (e.type === 'circuit') rows.push([date, e.cat, e.name, `${e.rounds}라운드`, '', '', e.minutes, '', kcal, [circuitSummary(e), e.note].filter(Boolean).join(' / ')]);
       else e.sets.forEach((x, i) => rows.push([date, e.cat, e.name, i + 1, x.kg, x.reps, '', '', i === 0 ? kcal : '', i === 0 ? e.note || '' : '']));
     }
   }
@@ -811,9 +871,12 @@ let routineDraft = null; // 편집 중인 루틴 { id, name, days, items, isNew 
 const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0]; // 월~일
 
 function routineItemFromEntry(e) {
+  if (e.type === 'circuit') {
+    const { note, routineId, isNew, ...c } = JSON.parse(JSON.stringify(e));
+    return { ...c, id: uid() };
+  }
   return {
-    id: uid(), exId: e.exId, name: e.name, cat: e.cat, type: e.type, met: e.met,
-    rom: e.rom || 0, bwFactor: e.bwFactor || 0, minutes: e.minutes || 0,
+    id: uid(), exId: e.exId, ...exParams(e), minutes: e.minutes || 0,
     sets: (e.sets || []).filter(x => Number(x.reps) > 0).map(x => ({ kg: Number(x.kg) || 0, reps: Number(x.reps) })),
   };
 }
@@ -825,7 +888,8 @@ const daysLabel = days => (days && days.length
 
 function itemSummary(it) {
   if (it.type === 'time') return `${fmt(it.minutes, 1)}분`;
-  return groupSets(it.sets).map(g => `${fmt(g.kg, 2)}kg×${g.reps}${g.count > 1 ? `×${g.count}` : ''}`).join(', ');
+  if (it.type === 'circuit') return `${it.rounds}라운드 · ${fmt(it.minutes, 1)}분`;
+  return groupSets(it.sets).map(g => `${setLabel(it, g.kg, g.reps)}${g.count > 1 ? `×${g.count}` : ''}`).join(', ');
 }
 
 function renderRoutines() {
@@ -875,11 +939,14 @@ async function loadRoutine(id, date) {
   if (list.some(e => e.routineId === id) &&
       !await ask(`'${r.name}' 루틴을 이미 불러왔습니다. 한 번 더 추가할까요?`)) return false;
   for (const it of r.items) {
+    if (it.type === 'circuit') {
+      list.push({ ...JSON.parse(JSON.stringify(it)), id: uid(), note: '', routineId: r.id });
+      continue;
+    }
     const ex = state.exercises.find(e => e.id === it.exId) || state.exercises.find(e => e.name === it.name);
-    const p = ex || it;
     list.push({
-      id: uid(), exId: ex ? ex.id : it.exId, name: p.name, cat: p.cat, type: p.type, met: p.met,
-      rom: p.rom || 0, bwFactor: p.bwFactor || 0, sets: (it.sets || []).map(x => ({ kg: x.kg, reps: x.reps })),
+      id: uid(), exId: ex ? ex.id : it.exId, ...exParams(ex || it),
+      sets: (it.sets || []).map(x => ({ kg: x.kg, reps: x.reps })),
       minutes: it.minutes || 0, km: 0, note: '', routineId: r.id,
     });
   }
@@ -968,6 +1035,151 @@ function saveDayAsRoutine() {
   renderRoutineSheet();
 }
 
+// ---------- 서킷 · 타바타 ----------
+// 여러 동작을 1라운드로 묶어 라운드 수 × 총 시간으로 기록 (쉬지 않고 이어서 하는 운동)
+let cdraft = null;
+
+function lastCircuit() {
+  for (const date of Object.keys(state.logs).sort().reverse()) {
+    const c = state.logs[date].filter(e => e.type === 'circuit').pop();
+    if (c) return c;
+  }
+  return null;
+}
+
+function openCircuitEditor(entry) {
+  const isNew = !entry;
+  const base = entry || lastCircuit();
+  cdraft = base
+    ? { ...JSON.parse(JSON.stringify(base)), id: isNew ? uid() : base.id, note: isNew ? '' : (base.note || '') }
+    : { id: uid(), type: 'circuit', name: '덤벨 서킷', cat: '전신', met: 8, minutes: 20, rounds: 5, moves: [], note: '' };
+  delete cdraft.routineId;
+  cdraft.isNew = isNew;
+  const inRoutine = editorMode === 'routine';
+  $('#circuit-title').textContent = inRoutine ? '서킷 · 루틴' : '서킷 · 타바타';
+  $('#c-name').value = cdraft.name;
+  $('#c-rounds').value = cdraft.rounds;
+  $('#c-minutes').value = cdraft.minutes;
+  $('#c-met').innerHTML = CIRCUIT_INTENSITIES.map(x =>
+    `<option value="${x.met}" ${Number(cdraft.met) === x.met ? 'selected' : ''}>${x.label}</option>`).join('');
+  $('#c-note').value = cdraft.note;
+  $('#c-note-wrap').classList.toggle('hidden', inRoutine);
+  $('#c-delete').classList.toggle('hidden', isNew);
+  if (!cdraft.moves.length) addCircuitMove();
+  renderCircuitMoves();
+  openSheet('#circuit-sheet');
+}
+
+function addCircuitMove() {
+  const last = cdraft.moves[cdraft.moves.length - 1];
+  const ex = state.exercises.find(e => e.type === 'strength' && !cdraft.moves.some(m => m.exId === e.id))
+    || state.exercises.find(e => e.type === 'strength');
+  if (!ex) return;
+  cdraft.moves.push({ exId: ex.id, ...exParams(ex), kg: last ? last.kg : (ex.refKg || 0), reps: last ? last.reps : 5 });
+}
+
+function renderCircuitMoves() {
+  const groups = CATEGORIES.map(cat => [cat, state.exercises.filter(e => e.type === 'strength' && e.cat === cat)])
+    .filter(([, list]) => list.length);
+  $('#c-moves').innerHTML = cdraft.moves.map((m, i) => `
+    <tr data-i="${i}">
+      <td class="move-cell"><select data-f="exId" aria-label="${i + 1}번째 동작">${groups.map(([cat, list]) =>
+        `<optgroup label="${esc(cat)}">${list.map(e =>
+          `<option value="${e.id}" ${e.id === m.exId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</optgroup>`).join('')}
+        ${state.exercises.some(e => e.id === m.exId) ? '' : `<option value="${esc(m.exId || '')}" selected>${esc(m.name)}</option>`}
+      </select><small class="muted">${(m.dbs || 1) === 2 ? '덤벨 1개 무게 · 양손' : '1개 무게'}${(m.sides || 1) === 2 ? ' · 한쪽 횟수' : ''}</small></td>
+      <td><input type="number" inputmode="decimal" step="0.5" min="0" data-f="kg" value="${m.kg}" aria-label="kg"></td>
+      <td><input type="number" inputmode="numeric" min="0" data-f="reps" value="${m.reps}" aria-label="회"></td>
+      <td><button class="icon-btn del-move" aria-label="동작 삭제">✕</button></td>
+    </tr>`).join('');
+  updateCircuitEstimate();
+}
+
+function updateCircuitEstimate() {
+  cdraft.name = $('#c-name').value.trim() || '서킷';
+  cdraft.rounds = Number($('#c-rounds').value) || 0;
+  cdraft.minutes = Number($('#c-minutes').value) || 0;
+  cdraft.met = Number($('#c-met').value) || 8;
+  const r = estimateEntry(cdraft, calcSettings());
+  const perMin = cdraft.minutes ? r.total / cdraft.minutes : 0;
+  $('#c-estimate').innerHTML = `예상 소모: <b>${fmt(r.total)} kcal</b>
+    <small>(시간 기준 ${fmt(r.base)} + 중량보정 ${fmt(r.bonus)})</small><br>
+    <small>분당 ${fmt(perMin, 1)} kcal · 총 볼륨 ${fmt(r.volume)}kg · ${cdraft.rounds}라운드</small>`;
+}
+
+function saveCircuit() {
+  updateCircuitEstimate();
+  cdraft.moves = cdraft.moves.filter(m => Number(m.reps) > 0);
+  if (!cdraft.moves.length) return toast('동작을 1개 이상 입력하세요');
+  if (!cdraft.rounds || !cdraft.minutes) return toast('라운드 수와 총 시간을 입력하세요');
+  cdraft.note = $('#c-note').value.trim();
+  const { isNew, ...entry } = cdraft;
+  if (editorMode === 'routine') {
+    const i = routineDraft.items.findIndex(x => x.id === entry.id);
+    const { note, ...item } = entry;
+    if (i < 0) routineDraft.items.push(item);
+    else routineDraft.items[i] = item;
+    cdraft = null;
+    return backToRoutineSheet();
+  }
+  const list = state.logs[currentDate] || (state.logs[currentDate] = []);
+  const i = list.findIndex(x => x.id === entry.id);
+  if (i < 0) list.push(entry);
+  else list[i] = entry;
+  save(currentDate);
+  cdraft = null;
+  closeSheets();
+  renderDay();
+  toast('저장했습니다');
+}
+
+async function deleteCircuit() {
+  if (editorMode === 'routine') {
+    routineDraft.items = routineDraft.items.filter(x => x.id !== cdraft.id);
+    cdraft = null;
+    return backToRoutineSheet();
+  }
+  if (!await ask('이 서킷 기록을 삭제할까요?')) return;
+  state.logs[currentDate] = (state.logs[currentDate] || []).filter(x => x.id !== cdraft.id);
+  if (!state.logs[currentDate].length) delete state.logs[currentDate];
+  save(currentDate);
+  cdraft = null;
+  closeSheets();
+  renderDay();
+}
+
+// ---------- 화면 꺼짐 방지 ----------
+// Screen Wake Lock: 앱이 화면에 보이는 동안만 유지되고, 다른 앱으로 가면 자동 해제 → 돌아오면 다시 요청
+let wakeLock = null;
+
+async function keepScreenOn() {
+  if (!state.settings.keepAwake || !('wakeLock' in navigator) || document.hidden) return;
+  if (wakeLock) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; renderWakeStatus(); });
+  } catch (e) {
+    wakeLock = null;
+  }
+  renderWakeStatus();
+}
+
+function releaseScreen() {
+  if (wakeLock) wakeLock.release().catch(() => {});
+  wakeLock = null;
+  renderWakeStatus();
+}
+
+function renderWakeStatus() {
+  const el = $('#wake-status');
+  if (!el) return;
+  el.textContent = !('wakeLock' in navigator)
+    ? '이 브라우저는 화면 꺼짐 방지를 지원하지 않습니다. 휴대폰의 화면 자동 잠금 시간을 늘려주세요.'
+    : !state.settings.keepAwake ? '꺼짐'
+      : wakeLock ? '동작 중: 앱이 열려 있는 동안 화면이 꺼지지 않습니다.'
+        : '화면을 한 번 터치하면 켜집니다.';
+}
+
 // ---------- 이벤트 ----------
 document.querySelector('.tabbar').onclick = ev => {
   const b = ev.target.closest('button[data-view]');
@@ -987,12 +1199,12 @@ $('#add-entry-btn').onclick = () => {
 };
 $('#pick-search').oninput = renderPickList;
 $('#pick-list').onclick = ev => {
+  if (ev.target.closest('[data-circuit]')) return openCircuitEditor(null);
   const li = ev.target.closest('li[data-id]');
   if (!li) return;
   const ex = state.exercises.find(e => e.id === li.dataset.id);
   openEntryEditor({
-    id: uid(), exId: ex.id, name: ex.name, cat: ex.cat, type: ex.type, met: ex.met,
-    rom: ex.rom || 0, bwFactor: ex.bwFactor || 0, sets: [], minutes: 0, km: 0, note: '',
+    id: uid(), exId: ex.id, ...exParams(ex), sets: [], minutes: 0, km: 0, note: '',
   }, true);
 };
 
@@ -1001,7 +1213,8 @@ $('#entry-list').onclick = ev => {
   if (!li) return;
   const entry = (state.logs[currentDate] || []).find(e => e.id === li.dataset.id);
   editorMode = 'log';
-  if (entry) openEntryEditor(entry, false);
+  if (entry && entry.type === 'circuit') openCircuitEditor(entry);
+  else if (entry) openEntryEditor(entry, false);
 };
 
 $('#q-apply').onclick = () => {
@@ -1082,7 +1295,13 @@ $('#timer-stop').onclick = stopTimer;
 $('#timer-plus').onclick = () => adjustTimer(15);
 $('#timer-minus').onclick = () => adjustTimer(-15);
 $('#rest-btn').onclick = () => startTimer();
-document.addEventListener('visibilitychange', () => { if (!document.hidden && timer.iv) tickTimer(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (timer.iv) tickTimer();
+  keepScreenOn();
+});
+// 일부 브라우저(iOS Safari)는 사용자가 화면을 누른 순간에만 화면 꺼짐 방지를 허용
+document.addEventListener('pointerdown', () => keepScreenOn(), { passive: true });
 
 $('#backup-now').onclick = exportJson;
 $('#backup-later').onclick = () => {
@@ -1125,7 +1344,8 @@ $('#routine-items').onclick = ev => {
   if (!li) return;
   const it = routineDraft.items.find(x => x.id === li.dataset.id);
   editorMode = 'routine';
-  openEntryEditor({ ...it, km: 0, note: '' }, false);
+  if (it.type === 'circuit') openCircuitEditor(it);
+  else openEntryEditor({ ...it, km: 0, note: '' }, false);
 };
 $('#routine-add-ex').onclick = () => {
   editorMode = 'routine';
@@ -1135,6 +1355,32 @@ $('#routine-add-ex').onclick = () => {
 };
 $('#routine-save').onclick = saveRoutine;
 $('#routine-delete').onclick = deleteRoutine;
+
+$('#c-moves').onchange = ev => {
+  const tr = ev.target.closest('tr');
+  if (!tr || ev.target.dataset.f !== 'exId') return;
+  const m = cdraft.moves[tr.dataset.i];
+  const ex = state.exercises.find(e => e.id === ev.target.value);
+  if (ex) Object.assign(m, { exId: ex.id, ...exParams(ex) });
+  renderCircuitMoves();
+};
+$('#c-moves').oninput = ev => {
+  const tr = ev.target.closest('tr');
+  const f = ev.target.dataset.f;
+  if (!tr || (f !== 'kg' && f !== 'reps')) return;
+  cdraft.moves[tr.dataset.i][f] = Number(ev.target.value) || 0;
+  updateCircuitEstimate();
+};
+$('#c-moves').onclick = ev => {
+  if (!ev.target.classList.contains('del-move')) return;
+  cdraft.moves.splice(Number(ev.target.closest('tr').dataset.i), 1);
+  renderCircuitMoves();
+};
+$('#c-add-move').onclick = () => { addCircuitMove(); renderCircuitMoves(); };
+['#c-name', '#c-rounds', '#c-minutes'].forEach(id => { $(id).oninput = updateCircuitEstimate; });
+$('#c-met').onchange = updateCircuitEstimate;
+$('#c-save').onclick = saveCircuit;
+$('#c-delete').onclick = deleteCircuit;
 
 $('#settings-form').onsubmit = saveSettings;
 $('#export-btn').onclick = exportJson;
