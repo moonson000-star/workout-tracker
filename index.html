@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="운동기록">
+  <title>운동 기록</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="view-title">오늘의 운동</h1>
+  </header>
+
+  <main id="app">
+    <!-- 오늘 / 날짜별 기록 -->
+    <section id="view-day" class="view active">
+      <div class="date-nav">
+        <button class="icon-btn" id="prev-day" aria-label="이전 날">‹</button>
+        <label class="date-label">
+          <span id="date-text"></span>
+          <input type="date" id="date-input" aria-label="날짜 선택">
+        </label>
+        <button class="icon-btn" id="next-day" aria-label="다음 날">›</button>
+        <button class="chip" id="today-btn">오늘</button>
+      </div>
+
+      <div class="summary card" id="day-summary"></div>
+      <div id="weight-banner" class="banner hidden">
+        정확한 칼로리 추정을 위해 <b>설정</b>에서 체중을 입력해주세요.
+      </div>
+      <ul class="entry-list" id="entry-list"></ul>
+      <p class="empty hidden" id="day-empty">기록된 운동이 없습니다.<br>아래 <b>＋</b> 버튼으로 추가하세요.</p>
+      <button class="fab" id="add-entry-btn" aria-label="운동 추가">＋</button>
+    </section>
+
+    <!-- 통계 -->
+    <section id="view-stats" class="view">
+      <div class="seg" id="range-seg">
+        <button data-range="7" class="active">7일</button>
+        <button data-range="30">30일</button>
+      </div>
+      <div class="card">
+        <h3>일별 소모 칼로리 (kcal)</h3>
+        <div id="kcal-chart" class="chart"></div>
+        <div id="range-summary" class="kv-grid"></div>
+      </div>
+      <div class="card">
+        <div class="cal-head">
+          <button class="icon-btn" id="cal-prev" aria-label="이전 달">‹</button>
+          <h3 id="cal-title"></h3>
+          <button class="icon-btn" id="cal-next" aria-label="다음 달">›</button>
+        </div>
+        <div id="calendar" class="calendar"></div>
+      </div>
+      <div class="card">
+        <h3>개인 기록 (최고 중량 · 추정 1RM)</h3>
+        <ul id="pr-list" class="pr-list"></ul>
+      </div>
+    </section>
+
+    <!-- 운동 목록 -->
+    <section id="view-exercises" class="view">
+      <input type="search" id="ex-search" class="search" placeholder="운동 검색">
+      <div class="chips" id="ex-cat-chips"></div>
+      <ul id="ex-manage-list" class="ex-list"></ul>
+      <button class="fab" id="add-ex-btn" aria-label="운동 종류 추가">＋</button>
+    </section>
+
+    <!-- 설정 -->
+    <section id="view-settings" class="view">
+      <form class="card form" id="settings-form">
+        <h3>내 정보 · 계산 설정</h3>
+        <label>체중 (kg)<input type="number" name="bodyWeight" inputmode="decimal" step="0.1" min="20" max="300"></label>
+        <label>1회 반복 소요시간 (초)<input type="number" name="secPerRep" inputmode="decimal" step="0.5" min="1" max="10"></label>
+        <label>세트 간 휴식 (초)<input type="number" name="restSec" inputmode="numeric" step="5" min="0" max="600"></label>
+        <label class="row">중량(볼륨) 보정 사용<input type="checkbox" name="volumeCorrection"></label>
+        <label>근육 효율 (%) <small>보정 계산용, 기본 25</small><input type="number" name="efficiencyPct" inputmode="numeric" step="1" min="10" max="40"></label>
+        <button type="submit" class="btn primary">저장</button>
+      </form>
+
+      <div class="card">
+        <h3>데이터 백업</h3>
+        <p class="muted">기록은 이 기기의 브라우저에만 저장됩니다. 주기적으로 백업 파일을 내려받아 두세요.</p>
+        <div class="btn-row">
+          <button class="btn" id="export-btn">백업 내보내기 (JSON)</button>
+          <button class="btn" id="csv-btn">CSV 내보내기</button>
+          <label class="btn">백업 가져오기<input type="file" id="import-input" accept="application/json,.json" hidden></label>
+        </div>
+        <button class="btn danger" id="reset-btn">전체 초기화</button>
+      </div>
+
+      <div class="card help">
+        <h3>칼로리 계산 방식</h3>
+        <p><b>① MET 기본 소모량</b><br>
+          kcal = MET × 체중(kg) × 시간(h)<br>
+          · 운동시간 = 세트별 반복수 × 1회 소요시간<br>
+          · 휴식시간 = 세트 수 × 세트 간 휴식 (MET 1.5 적용)</p>
+        <p><b>② 중량(볼륨) 보정</b><br>
+          kcal = (부하kg × 9.81 × 이동거리m × 반복수) ÷ 근육효율 ÷ 4184<br>
+          · 부하 = 들어올린 중량 + 체중 × 체중반영비율<br>
+          · 이동거리(ROM)·체중반영비율은 운동별로 설정</p>
+        <p><b>③ 유산소·시간형 운동</b><br>kcal = MET × 체중 × 시간(분)/60</p>
+        <p><b>④ 동작별 보정</b><br>
+          같은 시간·횟수라도 동원 근육량에 따라 소모량이 다릅니다. 운동별 MET·이동거리를 아래 연구의 측정값(분당 kcal)에 맞춰 보정했습니다.<br>
+          · Robergs 2007: 스쿼트 11~18, 벤치프레스 8~16 kcal/분 (1RM 40~70%)<br>
+          · Reis 2017 (PLOS ONE): 하체 운동이 가장 높고, 바이셉스 컬·랫풀다운은 약 3~4 kcal/분<br>
+          · 연구가 없는 동작은 근육량이 비슷한 동작을 기준으로 추정했습니다 (운동목록에 근거 표시).</p>
+        <p class="muted">MET 값은 Compendium of Physical Activities를 참고한 추정치이며, 실제 소모량은 개인차(심박수, 근육량, 템포 등)에 따라 ±30% 이상 차이 날 수 있습니다.</p>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button data-view="day" class="active"><span>📅</span>기록</button>
+    <button data-view="stats"><span>📊</span>통계</button>
+    <button data-view="exercises"><span>🏋️</span>운동목록</button>
+    <button data-view="settings"><span>⚙️</span>설정</button>
+  </nav>
+
+  <!-- 바텀시트: 운동 선택 -->
+  <div class="sheet-backdrop hidden" id="backdrop"></div>
+  <div class="sheet hidden" id="pick-sheet" role="dialog" aria-label="운동 선택">
+    <div class="sheet-head"><h2>운동 선택</h2><button class="icon-btn close-sheet" aria-label="닫기">✕</button></div>
+    <input type="search" id="pick-search" class="search" placeholder="운동 검색">
+    <div class="chips" id="pick-cat-chips"></div>
+    <ul id="pick-list" class="ex-list pick"></ul>
+  </div>
+
+  <!-- 바텀시트: 세트 입력 -->
+  <div class="sheet hidden" id="entry-sheet" role="dialog" aria-label="세트 입력">
+    <div class="sheet-head"><h2 id="entry-title"></h2><button class="icon-btn close-sheet" aria-label="닫기">✕</button></div>
+    <div id="strength-form">
+      <div class="quick">
+        <label>kg<input type="number" id="q-kg" inputmode="decimal" step="0.5" min="0"></label>
+        <span>×</span>
+        <label>회<input type="number" id="q-reps" inputmode="numeric" min="1"></label>
+        <span>×</span>
+        <label>세트<input type="number" id="q-sets" inputmode="numeric" min="1" max="30"></label>
+        <button class="btn primary" id="q-apply">적용</button>
+      </div>
+      <p class="muted small" id="last-record"></p>
+      <table class="sets">
+        <thead><tr><th>세트</th><th>kg</th><th>회</th><th></th></tr></thead>
+        <tbody id="sets-body"></tbody>
+      </table>
+      <button class="btn" id="add-set-btn">＋ 세트 추가</button>
+    </div>
+    <div id="time-form" class="hidden">
+      <label>운동 시간 (분)<input type="number" id="t-minutes" inputmode="decimal" step="1" min="1"></label>
+      <label>거리 (km, 선택)<input type="number" id="t-km" inputmode="decimal" step="0.1" min="0"></label>
+    </div>
+    <label>메모<input type="text" id="entry-note" maxlength="100" placeholder="선택 입력"></label>
+    <div class="estimate" id="entry-estimate"></div>
+    <div class="btn-row">
+      <button class="btn danger hidden" id="entry-delete">삭제</button>
+      <button class="btn primary grow" id="entry-save">저장</button>
+    </div>
+  </div>
+
+  <!-- 바텀시트: 운동 종류 추가/수정 -->
+  <div class="sheet hidden" id="ex-sheet" role="dialog" aria-label="운동 종류">
+    <div class="sheet-head"><h2 id="ex-sheet-title">운동 추가</h2><button class="icon-btn close-sheet" aria-label="닫기">✕</button></div>
+    <form id="ex-form" class="form">
+      <label>운동 이름<input type="text" name="exName" required maxlength="40"></label>
+      <label>부위<select name="cat"></select></label>
+      <label>기록 방식
+        <select name="type">
+          <option value="strength">중량 × 횟수 × 세트</option>
+          <option value="time">시간 (분)</option>
+        </select>
+      </label>
+      <label>MET 값 <small>근력 3.5~6, 유산소 4~12</small><input type="number" name="met" step="0.1" min="1" max="20" required></label>
+      <div class="strength-only">
+        <label>1회 이동거리 ROM (m) <small>예: 스쿼트 0.6, 벤치 0.4</small><input type="number" name="rom" step="0.05" min="0" max="2"></label>
+        <label>체중 반영 비율 (0~1) <small>예: 풀업 1.0, 푸시업 0.64</small><input type="number" name="bwFactor" step="0.05" min="0" max="1"></label>
+      </div>
+      <p class="muted small" id="ex-src"></p>
+      <div class="btn-row">
+        <button type="button" class="btn danger hidden" id="ex-delete">삭제</button>
+        <button type="submit" class="btn primary grow">저장</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="ask hidden" id="ask" role="alertdialog" aria-labelledby="ask-text">
+    <div class="ask-box">
+      <p id="ask-text"></p>
+      <div class="btn-row">
+        <button class="btn grow" id="ask-cancel">취소</button>
+        <button class="btn primary grow" id="ask-ok">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+
+  <script src="exercises.js"></script>
+  <script src="calc.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
