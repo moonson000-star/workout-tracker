@@ -358,14 +358,15 @@ function updateActivityPreview() {
     : '';
 }
 
-// 단축어 결과 예: "wt;date=2026-10-24;steps=8234;kcal=312.5" (순서·구분자 무관, 쉼표 허용)
+// 단축어 결과 예: "wt;date=2026-10-24;steps=8234;kcal=312.5" (순서·구분자 무관, 쉼표·단위 허용)
+// 날짜는 아이폰 기본 형식("2026. 10. 24.")이나 "2026년 10월 24일"도 인식
 function parseHealthText(text) {
   const t = String(text || '').replace(/(\d),(?=\d{3})/g, '$1');
   const num = keys => {
     const m = t.match(new RegExp(`(?:${keys})\\s*[=:]\\s*([\\d.]+)`, 'i'));
     return m ? Number(m[1]) : null;
   };
-  const d = t.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+  const d = t.match(/(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})/);
   return {
     date: d ? ymd(new Date(Number(d[1]), Number(d[2]) - 1, Number(d[3]))) : null,
     steps: num('steps|걸음'),
@@ -376,7 +377,9 @@ function parseHealthText(text) {
 function applyHealthText(text) {
   const r = parseHealthText(text);
   if (r.steps == null && r.kcal == null) {
-    toast('걸음 수를 찾지 못했습니다. 단축어 결과를 그대로 붙여넣어 주세요');
+    toast(/\[.*\]/.test(text)
+      ? '숫자 대신 [ ] 글자가 들어 있습니다. 단축어의 텍스트에서 [ ] 부분을 파란 변수로 바꿔주세요'
+      : '걸음 수를 찾지 못했습니다. 단축어 결과를 그대로 붙여넣어 주세요');
     return false;
   }
   if (r.date) { actDate = r.date; $('#act-date').textContent = actDate; }

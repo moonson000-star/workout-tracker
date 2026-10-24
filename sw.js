@@ -1,5 +1,5 @@
 // 오프라인 지원: 앱 파일을 캐시하고, 네트워크 우선으로 최신 버전을 받아옴
-const CACHE = 'workout-tracker-v5';
+const CACHE = 'workout-tracker-v6';
 const ASSETS = [
   './', 'index.html', 'style.css', 'app.js', 'calc.js', 'exercises.js',
   'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
