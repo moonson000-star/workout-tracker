@@ -366,7 +366,9 @@
     <div class="sheet-head"><h2>걸음 · 활동 칼로리</h2><button class="icon-btn close-sheet" aria-label="닫기">✕</button></div>
     <p class="muted small">날짜 <b id="act-date"></b></p>
     <button class="btn primary big wide" id="act-clip">📋 단축어 결과 가져오기 (클립보드)</button>
-    <label class="field">또는 여기에 붙여넣기<textarea id="act-paste" rows="2" placeholder="wt;date=2026-10-24;steps=8234;kcal=312"></textarea></label>
+    <label class="field">또는 아래 빈 칸을 <b>길게 눌러 → 붙여넣기</b>
+      <textarea id="act-paste" rows="2" placeholder="(비어 있음) 길게 눌러 붙여넣기"></textarea></label>
+    <p class="muted small">단축어를 실행하면 <code>wt;date=…;steps=8234;kcal=312</code> 같은 글자가 복사됩니다. 아이폰은 가져오기 버튼을 누른 뒤 뜨는 작은 <b>"붙여넣기"</b> 말풍선을 한 번 더 눌러야 합니다.</p>
     <div class="two">
       <label class="field">걸음 수<input type="number" id="act-steps" inputmode="numeric" min="0" max="200000"></label>
       <label class="field">활동 에너지 (kcal, 선택)<input type="number" id="act-kcal" inputmode="numeric" min="0" max="10000"></label>

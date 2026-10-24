@@ -390,13 +390,16 @@ function applyHealthText(text) {
 }
 
 async function pasteFromClipboard() {
+  let text;
   try {
-    const text = await navigator.clipboard.readText();
-    if (applyHealthText(text)) toast('클립보드에서 가져왔습니다. 확인 후 저장하세요');
+    text = await navigator.clipboard.readText();
   } catch (e) {
-    toast('클립보드를 읽을 수 없습니다. 아래 칸을 길게 눌러 붙여넣으세요');
     $('#act-paste').focus();
+    return toast('클립보드를 읽지 못했습니다. 아래 빈 칸을 길게 눌러 "붙여넣기"를 눌러주세요');
   }
+  if (!text || !text.trim()) return toast('클립보드가 비어 있습니다. 단축어를 먼저 실행해주세요');
+  $('#act-paste').value = text;
+  if (applyHealthText(text)) toast('가져왔습니다. 숫자를 확인하고 저장을 누르세요');
 }
 
 function saveActivity() {
@@ -1773,6 +1776,13 @@ $('#c-delete').onclick = deleteCircuit;
 $('#activity-card').onclick = ev => { if (ev.target.closest('[data-act]')) openActivitySheet(); };
 $('#act-clip').onclick = pasteFromClipboard;
 $('#act-paste').oninput = ev => { if (ev.target.value.trim()) applyHealthText(ev.target.value); };
+$('#act-paste').onpaste = ev => {
+  const text = ev.clipboardData && ev.clipboardData.getData('text');
+  if (!text) return;
+  ev.preventDefault();
+  ev.target.value = text;
+  if (applyHealthText(text)) toast('가져왔습니다. 숫자를 확인하고 저장을 누르세요');
+};
 $('#act-steps').oninput = updateActivityPreview;
 $('#act-kcal').oninput = updateActivityPreview;
 $('#act-save').onclick = saveActivity;

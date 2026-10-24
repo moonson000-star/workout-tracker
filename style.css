@@ -407,3 +407,5 @@ textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border
 .guide code { display: block; margin: 4px 0; padding: 6px 8px; background: var(--card); border-radius: 6px;
   font-size: 12px; word-break: break-all; }
 .guide p { margin: 6px 0 0; }
+
+textarea::placeholder, input::placeholder { color: var(--muted); opacity: .6; font-style: italic; }
