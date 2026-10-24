@@ -1549,7 +1549,7 @@ function renderWakeStatus() {
 
 // ---------- 새 버전 알림 ----------
 // 아이폰 홈 화면 앱은 닫지 않으면 예전 화면을 계속 띄우므로, 다시 볼 때 새 버전이 있는지 확인
-const APP_VERSION = '2026-10-24.9';
+const APP_VERSION = '2026-10-24.10';
 let updateCheckedAt = 0;
 
 async function checkForUpdate() {
@@ -1818,6 +1818,7 @@ importActivityFromUrl();
 render();
 initCloud();
 $('#update-now').onclick = () => location.reload();
+$('#app-version').textContent = APP_VERSION;
 setTimeout(checkForUpdate, 2000);
 
 // 단독 PWA로 열 때만 오프라인 캐시 사용 (claude.ai 안에서는 window.claude가 있음)
