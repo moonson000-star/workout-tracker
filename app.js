@@ -2,8 +2,12 @@
 
 const STORAGE_KEY = 'workout-tracker-v1';
 const DEFAULT_SETTINGS = {
-  bodyWeight: null, secPerRep: 3, restSec: 90, volumeCorrection: true, efficiencyPct: 25,
+  bodyWeight: null, heightCm: null, secPerRep: 3, restSec: 90, volumeCorrection: true, efficiencyPct: 25,
+  timerSound: true,
 };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const BACKUP_EVERY_DAYS = 7;
+const newBackupState = () => ({ lastAt: null, snoozeUntil: null, since: Date.now() });
 
 // ---------- 상태 ----------
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -14,6 +18,8 @@ function normalizeState(s) {
       settings: { ...DEFAULT_SETTINGS },
       exercises: DEFAULT_EXERCISES.map(e => ({ id: uid(), ...e })),
       logs: {},
+      routines: [],
+      backup: newBackupState(),
       calibVersion: CALIB_VERSION,
     };
   }
@@ -21,6 +27,8 @@ function normalizeState(s) {
     settings: { ...DEFAULT_SETTINGS, ...s.settings },
     exercises: s.exercises || [],
     logs: s.logs || {},
+    routines: s.routines || [],
+    backup: { ...newBackupState(), ...s.backup },
     calibVersion: s.calibVersion || 1,
   };
 }
@@ -58,7 +66,7 @@ applyCalibration(state);
 
 // ---------- 저장 ----------
 // 기기 저장(localStorage)을 기본으로 하고, claude.ai에서 열면 계정 저장소(db)에 동기화
-// db 구조: data/users/<id>/meta (설정·운동목록), data/users/<id>/log-YYYY-MM (월별 기록)
+// db 구조: data/users/<id>/meta (설정·운동목록·루틴), data/users/<id>/log-YYYY-MM (월별 기록)
 let cloud = null; // { db, col, ids:Set, writes:{} }
 
 function saveLocal() {
@@ -70,7 +78,10 @@ function save(what) {
   saveLocal();
   if (!cloud) return;
   if (what === 'meta' || what === 'all') {
-    cloudWrite('meta', { settings: state.settings, exercises: state.exercises, calibVersion: state.calibVersion });
+    cloudWrite('meta', {
+      settings: state.settings, exercises: state.exercises, routines: state.routines,
+      backup: state.backup, calibVersion: state.calibVersion,
+    });
   }
   if (what === 'all') {
     const months = new Set(Object.keys(state.logs).map(d => d.slice(0, 7)));
@@ -124,6 +135,8 @@ async function initCloud() {
         state.settings = { ...DEFAULT_SETTINGS, ...body.settings };
         if (Array.isArray(body.exercises)) state.exercises = JSON.parse(JSON.stringify(body.exercises));
         state.calibVersion = body.calibVersion || 1;
+        state.routines = JSON.parse(JSON.stringify(body.routines || []));
+        state.backup = { ...newBackupState(), ...body.backup };
       } else if (d.id.startsWith('log-')) {
         Object.assign(logs, JSON.parse(JSON.stringify(body.days || {})));
       }
@@ -154,7 +167,7 @@ function toast(msg) {
   t.textContent = msg;
   t.classList.remove('hidden');
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => t.classList.add('hidden'), 1800);
+  toast.timer = setTimeout(() => t.classList.add('hidden'), Math.max(1800, msg.length * 70));
 }
 
 function dayTotals(date) {
@@ -180,7 +193,7 @@ function ask(message) {
 }
 
 // ---------- 화면 전환 ----------
-const VIEW_TITLES = { day: '오늘의 운동', stats: '통계', exercises: '운동 목록', settings: '설정' };
+const VIEW_TITLES = { day: '오늘의 운동', stats: '통계', routines: '루틴', exercises: '운동 목록', settings: '설정' };
 let currentView = 'day';
 
 function showView(v) {
@@ -194,6 +207,7 @@ function showView(v) {
 function render() {
   if (currentView === 'day') renderDay();
   if (currentView === 'stats') renderStats();
+  if (currentView === 'routines') renderRoutines();
   if (currentView === 'exercises') renderExerciseManage();
   if (currentView === 'settings') renderSettings();
 }
@@ -208,6 +222,7 @@ function renderDay() {
   $('#date-input').value = currentDate;
   $('#view-title').textContent = isToday ? '오늘의 운동' : '운동 기록';
   $('#weight-banner').classList.toggle('hidden', !!state.settings.bodyWeight);
+  renderBackupBanner();
 
   const t = dayTotals(currentDate);
   $('#day-summary').innerHTML = `
@@ -218,6 +233,9 @@ function renderDay() {
 
   const entries = state.logs[currentDate] || [];
   $('#day-empty').classList.toggle('hidden', entries.length > 0);
+  $('#save-routine-btn').classList.toggle('hidden', !entries.length);
+  $('#load-routine-btn').classList.toggle('hidden', !state.routines.length);
+  renderRoutineSuggest(entries, d.getDay());
   const s = calcSettings();
   $('#entry-list').innerHTML = entries.map(e => {
     const r = estimateEntry(e, s);
@@ -225,8 +243,10 @@ function renderDay() {
     if (e.type === 'time') {
       detail = `<span class="set-chip">${fmt(e.minutes, 1)}분${e.km ? ` · ${fmt(e.km, 2)}km` : ''}</span>`;
     } else {
-      detail = groupSets(e.sets).map(g =>
-        `<span class="set-chip">${fmt(g.kg, 2)}kg × ${g.reps}회${g.count > 1 ? ` × ${g.count}세트` : ''}</span>`).join('');
+      const done = e.sets.filter(x => x.done).length;
+      detail = (done ? `<span class="set-chip done">✓ ${done}/${e.sets.length}</span>` : '') +
+        groupSets(e.sets).map(g =>
+          `<span class="set-chip">${fmt(g.kg, 2)}kg × ${g.reps}회${g.count > 1 ? ` × ${g.count}세트` : ''}</span>`).join('');
     }
     return `<li class="entry card" data-id="${e.id}">
       <div class="entry-head">
@@ -257,7 +277,12 @@ function openSheet(id) {
   $(id).classList.remove('hidden');
 }
 function closeSheets() {
+  const inRoutineChild = editorMode === 'routine' &&
+    (!$('#pick-sheet').classList.contains('hidden') || !$('#entry-sheet').classList.contains('hidden'));
   document.querySelectorAll('.sheet').forEach(s => s.classList.add('hidden'));
+  if (inRoutineChild) { backToRoutineSheet(); return; }
+  editorMode = 'log';
+  routineDraft = null;
   $('#backdrop').classList.add('hidden');
 }
 
@@ -327,11 +352,15 @@ function lastEntryFor(exId, beforeDate) {
 
 // 세트 입력 시트
 let draft = null; // 편집 중인 entry
+let editorMode = 'log'; // 'log': 날짜별 기록, 'routine': 루틴 항목
 
 function openEntryEditor(entry, isNew) {
   draft = JSON.parse(JSON.stringify(entry));
   draft.isNew = isNew;
-  $('#entry-title').textContent = draft.name;
+  const inRoutine = editorMode === 'routine';
+  $('#entry-title').textContent = inRoutine ? `${draft.name} · 루틴` : draft.name;
+  $('#entry-sheet').classList.toggle('routine-mode', inRoutine);
+  $('#entry-note-wrap').classList.toggle('hidden', inRoutine);
   $('#entry-note').value = draft.note || '';
   $('#entry-delete').classList.toggle('hidden', isNew);
   const isTime = draft.type === 'time';
@@ -349,7 +378,7 @@ function openEntryEditor(entry, isNew) {
     } else {
       $('#last-record').textContent = '';
     }
-    if (isNew && last) draft.sets = last.entry.sets.map(x => ({ ...x }));
+    if (isNew && last) draft.sets = last.entry.sets.map(x => ({ kg: x.kg, reps: x.reps }));
     const first = draft.sets[0];
     $('#q-kg').value = first ? first.kg : '';
     $('#q-reps').value = first ? first.reps : 10;
@@ -366,6 +395,7 @@ function renderSets() {
       <td>${i + 1}</td>
       <td><input type="number" inputmode="decimal" step="0.5" min="0" data-f="kg" value="${x.kg}"></td>
       <td><input type="number" inputmode="numeric" min="0" data-f="reps" value="${x.reps}"></td>
+      <td class="chk-col"><button class="chk ${x.done ? 'on' : ''}" aria-label="${i + 1}세트 완료" aria-pressed="${!!x.done}">✓</button></td>
       <td><button class="icon-btn del-set" aria-label="세트 삭제">✕</button></td>
     </tr>`).join('');
 }
@@ -383,26 +413,42 @@ function updateEstimate() {
   $('#entry-estimate').innerHTML = `예상 소모: <b>${fmt(r.total)} kcal</b>${extra}`;
 }
 
-function saveDraft() {
-  draft.note = $('#entry-note').value.trim();
+function validDraft() {
   if (draft.type === 'time') {
-    if (!draft.minutes) return toast('운동 시간을 입력하세요');
-  } else {
-    draft.sets = draft.sets.filter(x => Number(x.reps) > 0);
-    if (!draft.sets.length) return toast('최소 1세트를 입력하세요');
+    if (!draft.minutes) { toast('운동 시간을 입력하세요'); return false; }
+  } else if (!draft.sets.some(x => Number(x.reps) > 0)) {
+    toast('최소 1세트를 입력하세요');
+    return false;
   }
+  return true;
+}
+
+// 기록 모드에서 현재 편집 내용을 그날 기록에 반영 (시트는 그대로)
+function persistDraft() {
+  draft.note = $('#entry-note').value.trim();
   const { isNew, ...entry } = draft;
+  entry.sets = (entry.sets || []).filter(x => Number(x.reps) > 0);
   const list = state.logs[currentDate] || (state.logs[currentDate] = []);
-  if (isNew) list.push(entry);
-  else list[list.findIndex(x => x.id === entry.id)] = entry;
+  const i = list.findIndex(x => x.id === entry.id);
+  if (i < 0) list.push(entry);
+  else list[i] = entry;
+  draft.isNew = false;
+  $('#entry-delete').classList.remove('hidden');
   save(currentDate);
+  renderDay();
+}
+
+function saveDraft() {
+  if (!validDraft()) return;
+  if (editorMode === 'routine') return saveRoutineItem();
+  persistDraft();
   closeSheets();
   draft = null;
-  renderDay();
   toast('저장했습니다');
 }
 
 async function deleteDraft() {
+  if (editorMode === 'routine') return deleteRoutineItem();
   if (!await ask('이 운동 기록을 삭제할까요?')) return;
   const list = state.logs[currentDate] || [];
   state.logs[currentDate] = list.filter(x => x.id !== draft.id);
@@ -563,6 +609,8 @@ async function deleteExercise() {
 function renderSettings() {
   const f = $('#settings-form'), s = state.settings;
   f.bodyWeight.value = s.bodyWeight ?? '';
+  f.heightCm.value = s.heightCm ?? '';
+  f.timerSound.checked = s.timerSound;
   f.secPerRep.value = s.secPerRep;
   f.restSec.value = s.restSec;
   f.volumeCorrection.checked = s.volumeCorrection;
@@ -574,6 +622,8 @@ function saveSettings(ev) {
   const f = ev.target;
   state.settings = {
     bodyWeight: Number(f.bodyWeight.value) || null,
+    heightCm: Number(f.heightCm.value) || null,
+    timerSound: f.timerSound.checked,
     secPerRep: Number(f.secPerRep.value) || DEFAULT_SETTINGS.secPerRep,
     restSec: Number(f.restSec.value) >= 0 ? Number(f.restSec.value) : DEFAULT_SETTINGS.restSec,
     volumeCorrection: f.volumeCorrection.checked,
@@ -583,24 +633,58 @@ function saveSettings(ev) {
   toast('설정을 저장했습니다');
 }
 
+// 저장에 성공하면 true
+// claude.ai 안에서는 downloads 기능, 휴대폰은 공유 시트('파일에 저장'), 그 밖에는 다운로드 링크
 async function download(filename, text, type) {
-  // claude.ai 안에서는 downloads 기능으로, 일반 브라우저에서는 링크로 저장
   const dl = window.claude && window.claude.use ? await claude.use('downloads') : null;
   if (dl) {
-    try { await dl.save({ filename, data: text }); } catch (e) {
+    try { await dl.save({ filename, data: text }); return true; } catch (e) {
       if (e && e.code !== 'declined') toast('파일을 저장하지 못했습니다');
+      return false;
     }
-    return;
+  }
+  const file = typeof File === 'function' ? new File([text], filename, { type }) : null;
+  const touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+  if (touch && file && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: filename }); return true; } catch (e) {
+      if (e && e.name === 'AbortError') return false;
+    }
   }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], { type }));
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  return true;
 }
 
-function exportJson() {
-  download(`workout-backup-${ymd(new Date())}.json`, JSON.stringify(state, null, 2), 'application/json');
+async function exportJson() {
+  const ok = await download(`workout-backup-${ymd(new Date())}.json`, JSON.stringify(state, null, 2), 'application/json');
+  if (ok) {
+    state.backup = { ...state.backup, lastAt: Date.now(), snoozeUntil: null };
+    save('meta');
+    render();
+    toast('백업했습니다');
+  }
+}
+
+// ---------- 백업 알림 ----------
+// 기기에만 저장되는 단독 앱에서, 마지막 백업(또는 사용 시작) 후 7일이 지나면 표시
+function backupDueDays() {
+  if (cloud || !Object.keys(state.logs).length) return 0;
+  const b = state.backup, now = Date.now();
+  if (b.snoozeUntil && now < b.snoozeUntil) return 0;
+  const days = Math.floor((now - (b.lastAt || b.since || now)) / DAY_MS);
+  return days >= BACKUP_EVERY_DAYS ? days : 0;
+}
+
+function renderBackupBanner() {
+  const days = backupDueDays();
+  $('#backup-banner').classList.toggle('hidden', !days);
+  if (!days) return;
+  $('#backup-text').innerHTML = state.backup.lastAt
+    ? `마지막 백업 후 <b>${days}일</b>이 지났습니다. 기록은 이 기기에만 저장되니 백업 파일을 받아두세요.`
+    : '아직 백업한 적이 없습니다. 기록은 이 기기에만 저장되니 백업 파일을 받아두세요.';
 }
 
 function exportCsv() {
@@ -646,6 +730,244 @@ async function resetAll() {
   toast('초기화했습니다');
 }
 
+// ---------- 휴식 타이머 ----------
+const timer = { endAt: 0, iv: null, hideT: null, audio: null };
+const fmtClock = sec => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+
+function startTimer(sec = Number(state.settings.restSec) || 90) {
+  primeAudio();
+  clearTimeout(timer.hideT);
+  timer.endAt = Date.now() + sec * 1000;
+  $('#timer').classList.remove('hidden', 'done');
+  $('#timer-label').textContent = '휴식';
+  clearInterval(timer.iv);
+  timer.iv = setInterval(tickTimer, 250);
+  tickTimer();
+}
+
+function stopTimer() {
+  clearInterval(timer.iv);
+  clearTimeout(timer.hideT);
+  timer.iv = null;
+  timer.endAt = 0;
+  $('#timer').classList.add('hidden');
+}
+
+function adjustTimer(delta) {
+  const left = timer.iv ? Math.ceil((timer.endAt - Date.now()) / 1000) : 0;
+  if (left + delta > 0) startTimer(left + delta);
+  else if (timer.iv) finishTimer();
+}
+
+function tickTimer() {
+  const left = Math.ceil((timer.endAt - Date.now()) / 1000);
+  if (left <= 0) return finishTimer();
+  $('#timer-time').textContent = fmtClock(left);
+}
+
+function finishTimer() {
+  clearInterval(timer.iv);
+  timer.iv = null;
+  $('#timer-time').textContent = '0:00';
+  $('#timer-label').textContent = '휴식 끝!';
+  $('#timer').classList.add('done');
+  alertTimer();
+  timer.hideT = setTimeout(stopTimer, 6000);
+}
+
+// 브라우저는 사용자가 버튼을 누른 순간에만 소리를 허용하므로, 타이머를 시작할 때 미리 준비
+function primeAudio() {
+  if (!state.settings.timerSound) return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!timer.audio && AC) timer.audio = new AC();
+    if (timer.audio && timer.audio.state === 'suspended') timer.audio.resume();
+  } catch (e) { timer.audio = null; }
+}
+
+function alertTimer() {
+  if (!state.settings.timerSound) return;
+  try { if (navigator.vibrate) navigator.vibrate([250, 120, 250, 120, 250]); } catch (e) { /* 진동 미지원 */ }
+  const ctx = timer.audio;
+  if (!ctx) return;
+  try {
+    const t0 = ctx.currentTime;
+    for (let i = 0; i < 3; i++) {
+      const at = t0 + i * 0.35;
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.4, at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.25);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(at);
+      osc.stop(at + 0.3);
+    }
+  } catch (e) { /* 소리 재생 불가 */ }
+}
+
+// ---------- 루틴 ----------
+let routineDraft = null; // 편집 중인 루틴 { id, name, days, items, isNew }
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0]; // 월~일
+
+function routineItemFromEntry(e) {
+  return {
+    id: uid(), exId: e.exId, name: e.name, cat: e.cat, type: e.type, met: e.met,
+    rom: e.rom || 0, bwFactor: e.bwFactor || 0, minutes: e.minutes || 0,
+    sets: (e.sets || []).filter(x => Number(x.reps) > 0).map(x => ({ kg: Number(x.kg) || 0, reps: Number(x.reps) })),
+  };
+}
+
+const routineKcal = r => r.items.reduce((a, it) => a + estimateEntry(it, calcSettings()).total, 0);
+const daysLabel = days => (days && days.length
+  ? WEEK_ORDER.filter(d => days.includes(d)).map(d => WEEKDAYS[d]).join('·')
+  : '요일 미지정');
+
+function itemSummary(it) {
+  if (it.type === 'time') return `${fmt(it.minutes, 1)}분`;
+  return groupSets(it.sets).map(g => `${fmt(g.kg, 2)}kg×${g.reps}${g.count > 1 ? `×${g.count}` : ''}`).join(', ');
+}
+
+function renderRoutines() {
+  $('#routine-empty').classList.toggle('hidden', state.routines.length > 0);
+  $('#routine-list').innerHTML = state.routines.map(r => `
+    <li class="card routine-card" data-id="${r.id}">
+      <div class="entry-head">
+        <div><b>${esc(r.name)}</b> <span class="cat-tag">${esc(daysLabel(r.days))}</span></div>
+        <div class="kcal">≈${fmt(routineKcal(r))} kcal</div>
+      </div>
+      <ul class="routine-lines">${r.items.map(it =>
+        `<li><span>${esc(it.name)}</span><small class="muted">${esc(itemSummary(it))}</small></li>`).join('')}</ul>
+      <div class="btn-row"><button class="btn primary grow" data-load="${r.id}">오늘 기록에 불러오기</button></div>
+    </li>`).join('');
+}
+
+// 기록이 없는 날, 그 요일로 지정된 루틴을 추천
+function renderRoutineSuggest(entries, weekday) {
+  const matches = entries.length ? [] : state.routines.filter(r => (r.days || []).includes(weekday));
+  $('#routine-suggest').innerHTML = matches.map(r => `
+    <div class="card suggest">
+      <div class="entry-head">
+        <div><small class="muted">${WEEKDAYS[weekday]}요일 루틴</small><br><b>${esc(r.name)}</b></div>
+        <div class="kcal">≈${fmt(routineKcal(r))} kcal</div>
+      </div>
+      <div class="set-chips">${r.items.map(it => `<span class="set-chip">${esc(it.name)}</span>`).join('')}</div>
+      <div class="btn-row"><button class="btn primary grow" data-load="${r.id}">불러오기</button></div>
+    </div>`).join('');
+}
+
+function openRoutinePicker() {
+  const wd = parseYmd(currentDate).getDay();
+  const list = [...state.routines].sort((a, b) =>
+    Number((b.days || []).includes(wd)) - Number((a.days || []).includes(wd)));
+  $('#routine-pick-list').innerHTML = list.map(r => `
+    <li data-load="${r.id}"><div><b>${esc(r.name)}</b><br>
+    <small class="muted">${esc(daysLabel(r.days))} · ${r.items.length}개 운동</small></div>
+    <small class="muted nowrap">≈${fmt(routineKcal(r))} kcal</small></li>`).join('');
+  openSheet('#routine-pick-sheet');
+}
+
+// 루틴의 운동을 그날 기록으로 추가 (운동 계수는 현재 운동목록 기준)
+async function loadRoutine(id, date) {
+  const r = state.routines.find(x => x.id === id);
+  if (!r) return false;
+  const list = state.logs[date] || [];
+  if (list.some(e => e.routineId === id) &&
+      !await ask(`'${r.name}' 루틴을 이미 불러왔습니다. 한 번 더 추가할까요?`)) return false;
+  for (const it of r.items) {
+    const ex = state.exercises.find(e => e.id === it.exId) || state.exercises.find(e => e.name === it.name);
+    const p = ex || it;
+    list.push({
+      id: uid(), exId: ex ? ex.id : it.exId, name: p.name, cat: p.cat, type: p.type, met: p.met,
+      rom: p.rom || 0, bwFactor: p.bwFactor || 0, sets: (it.sets || []).map(x => ({ kg: x.kg, reps: x.reps })),
+      minutes: it.minutes || 0, km: 0, note: '', routineId: r.id,
+    });
+  }
+  state.logs[date] = list;
+  save(date);
+  closeSheets();
+  render();
+  toast(`'${r.name}' 루틴을 불러왔습니다. 하지 않은 운동은 눌러서 삭제하세요`);
+  return true;
+}
+
+function openRoutineEditor(r) {
+  routineDraft = r
+    ? { ...JSON.parse(JSON.stringify(r)), isNew: false }
+    : { id: uid(), name: '', days: [], items: [], isNew: true };
+  routineDraft.days = routineDraft.days || [];
+  $('#routine-name').value = routineDraft.name;
+  $('#routine-sheet-title').textContent = routineDraft.isNew ? '루틴 만들기' : '루틴 수정';
+  $('#routine-delete').classList.toggle('hidden', routineDraft.isNew);
+  renderRoutineSheet();
+  openSheet('#routine-sheet');
+}
+
+function renderRoutineSheet() {
+  const r = routineDraft;
+  $('#routine-days').innerHTML = WEEK_ORDER.map(d => `
+    <button class="chip ${r.days.includes(d) ? 'active' : ''}" data-d="${d}" aria-pressed="${r.days.includes(d)}">${WEEKDAYS[d]}</button>`).join('');
+  $('#routine-items').innerHTML = r.items.map(it => `
+    <li data-id="${it.id}"><div><span class="cat-tag">${esc(it.cat)}</span>${esc(it.name)}</div>
+    <small class="muted">${esc(itemSummary(it))}</small></li>`).join('')
+    || '<li class="muted">＋ 운동 추가로 루틴에 넣을 운동을 고르세요.</li>';
+  $('#routine-estimate').innerHTML = r.items.length
+    ? `루틴 전체 예상 소모: <b>${fmt(routineKcal(r))} kcal</b> <small>(${r.items.length}개 운동)</small>`
+    : '';
+}
+
+function backToRoutineSheet() {
+  editorMode = 'log';
+  draft = null;
+  renderRoutineSheet();
+  openSheet('#routine-sheet');
+}
+
+function saveRoutineItem() {
+  const item = { ...routineItemFromEntry(draft), id: draft.id };
+  const i = routineDraft.items.findIndex(x => x.id === draft.id);
+  if (i < 0) routineDraft.items.push(item);
+  else routineDraft.items[i] = item;
+  backToRoutineSheet();
+}
+
+function deleteRoutineItem() {
+  routineDraft.items = routineDraft.items.filter(x => x.id !== draft.id);
+  backToRoutineSheet();
+}
+
+function saveRoutine() {
+  const r = routineDraft;
+  r.name = $('#routine-name').value.trim() || `루틴 ${state.routines.length + 1}`;
+  if (!r.items.length) return toast('운동을 1개 이상 추가하세요');
+  const { isNew, ...routine } = r;
+  const i = state.routines.findIndex(x => x.id === routine.id);
+  if (i < 0) state.routines.push(routine);
+  else state.routines[i] = routine;
+  save('meta');
+  closeSheets();
+  render();
+  toast('루틴을 저장했습니다');
+}
+
+async function deleteRoutine() {
+  if (!await ask(`'${routineDraft.name || '이'}' 루틴을 삭제할까요? (불러온 기록은 유지됩니다)`)) return;
+  state.routines = state.routines.filter(x => x.id !== routineDraft.id);
+  save('meta');
+  closeSheets();
+  render();
+}
+
+function saveDayAsRoutine() {
+  const d = parseYmd(currentDate);
+  openRoutineEditor(null);
+  routineDraft.name = `${d.getMonth() + 1}/${d.getDate()} 루틴`;
+  routineDraft.days = [d.getDay()];
+  routineDraft.items = (state.logs[currentDate] || []).map(routineItemFromEntry);
+  $('#routine-name').value = routineDraft.name;
+  renderRoutineSheet();
+}
+
 // ---------- 이벤트 ----------
 document.querySelector('.tabbar').onclick = ev => {
   const b = ev.target.closest('button[data-view]');
@@ -658,6 +980,7 @@ $('#today-btn').onclick = () => { currentDate = ymd(new Date()); renderDay(); };
 $('#date-input').onchange = ev => { if (ev.target.value) { currentDate = ev.target.value; renderDay(); } };
 
 $('#add-entry-btn').onclick = () => {
+  editorMode = 'log';
   $('#pick-search').value = '';
   renderPickList();
   openSheet('#pick-sheet');
@@ -677,6 +1000,7 @@ $('#entry-list').onclick = ev => {
   const li = ev.target.closest('li[data-id]');
   if (!li) return;
   const entry = (state.logs[currentDate] || []).find(e => e.id === li.dataset.id);
+  editorMode = 'log';
   if (entry) openEntryEditor(entry, false);
 };
 
@@ -691,7 +1015,7 @@ $('#q-apply').onclick = () => {
 };
 $('#add-set-btn').onclick = () => {
   const last = draft.sets[draft.sets.length - 1] || { kg: Number($('#q-kg').value) || 0, reps: Number($('#q-reps').value) || 10 };
-  draft.sets.push({ ...last });
+  draft.sets.push({ kg: last.kg, reps: last.reps });
   renderSets();
   updateEstimate();
 };
@@ -702,6 +1026,21 @@ $('#sets-body').oninput = ev => {
   updateEstimate();
 };
 $('#sets-body').onclick = ev => {
+  const chk = ev.target.closest('.chk');
+  if (chk) {
+    // 세트 완료 체크: 바로 저장하고 휴식 타이머 시작
+    const x = draft.sets[Number(chk.closest('tr').dataset.i)];
+    x.done = !x.done;
+    renderSets();
+    updateEstimate();
+    if (x.done) {
+      if (Number(x.reps) > 0) persistDraft();
+      startTimer();
+    } else if (!draft.isNew) {
+      persistDraft();
+    }
+    return;
+  }
   if (!ev.target.classList.contains('del-set')) return;
   draft.sets.splice(Number(ev.target.closest('tr').dataset.i), 1);
   renderSets();
@@ -737,6 +1076,65 @@ $('#ex-manage-list').onclick = ev => {
 $('#ex-form').onsubmit = saveExercise;
 $('#ex-form').type.onchange = toggleStrengthFields;
 $('#ex-delete').onclick = deleteExercise;
+
+$('#timer-btn').onclick = () => (timer.iv ? stopTimer() : startTimer());
+$('#timer-stop').onclick = stopTimer;
+$('#timer-plus').onclick = () => adjustTimer(15);
+$('#timer-minus').onclick = () => adjustTimer(-15);
+$('#rest-btn').onclick = () => startTimer();
+document.addEventListener('visibilitychange', () => { if (!document.hidden && timer.iv) tickTimer(); });
+
+$('#backup-now').onclick = exportJson;
+$('#backup-later').onclick = () => {
+  state.backup = { ...state.backup, snoozeUntil: Date.now() + DAY_MS };
+  save('meta');
+  renderDay();
+};
+
+$('#load-routine-btn').onclick = openRoutinePicker;
+$('#save-routine-btn').onclick = saveDayAsRoutine;
+$('#routine-suggest').onclick = ev => {
+  const b = ev.target.closest('[data-load]');
+  if (b) loadRoutine(b.dataset.load, currentDate);
+};
+$('#routine-pick-list').onclick = ev => {
+  const li = ev.target.closest('[data-load]');
+  if (li) loadRoutine(li.dataset.load, currentDate);
+};
+$('#routine-list').onclick = async ev => {
+  const b = ev.target.closest('[data-load]');
+  if (b) {
+    const today = ymd(new Date());
+    if (await loadRoutine(b.dataset.load, today)) goToDate(today);
+    return;
+  }
+  const card = ev.target.closest('li.routine-card');
+  if (card) openRoutineEditor(state.routines.find(r => r.id === card.dataset.id));
+};
+$('#add-routine-btn').onclick = () => openRoutineEditor(null);
+$('#routine-name').oninput = ev => { routineDraft.name = ev.target.value; };
+$('#routine-days').onclick = ev => {
+  const b = ev.target.closest('[data-d]');
+  if (!b) return;
+  const d = Number(b.dataset.d);
+  routineDraft.days = routineDraft.days.includes(d) ? routineDraft.days.filter(x => x !== d) : [...routineDraft.days, d];
+  renderRoutineSheet();
+};
+$('#routine-items').onclick = ev => {
+  const li = ev.target.closest('li[data-id]');
+  if (!li) return;
+  const it = routineDraft.items.find(x => x.id === li.dataset.id);
+  editorMode = 'routine';
+  openEntryEditor({ ...it, km: 0, note: '' }, false);
+};
+$('#routine-add-ex').onclick = () => {
+  editorMode = 'routine';
+  $('#pick-search').value = '';
+  renderPickList();
+  openSheet('#pick-sheet');
+};
+$('#routine-save').onclick = saveRoutine;
+$('#routine-delete').onclick = deleteRoutine;
 
 $('#settings-form').onsubmit = saveSettings;
 $('#export-btn').onclick = exportJson;

@@ -12,6 +12,9 @@
   --toast-bg: rgba(17,24,39,.92);
   --toast-fg: #ffffff;
   --on-accent: #ffffff;
+  --warn-soft: #fef3c7;
+  --warn: #b45309;
+  --good: #16a34a;
   --radius: 14px;
 }
 @media (prefers-color-scheme: dark) {
@@ -29,6 +32,9 @@
     --toast-bg: rgba(229,231,235,.95);
     --toast-fg: #111827;
     --on-accent: #0b1020;
+    --warn-soft: #3b2a0c;
+    --warn: #fbbf24;
+    --good: #4ade80;
     color-scheme: dark;
   }
 }
@@ -46,6 +52,9 @@
   --toast-bg: rgba(229,231,235,.95);
   --toast-fg: #111827;
   --on-accent: #0b1020;
+  --warn-soft: #3b2a0c;
+  --warn: #fbbf24;
+  --good: #4ade80;
   color-scheme: dark;
 }
 
@@ -70,7 +79,9 @@ button, input, select { font: inherit; color: inherit; }
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
 }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .topbar h1 { margin: 0; font-size: 22px; }
+.timer-btn { font-size: 20px; }
 
 main {
   max-width: 640px; margin: 0 auto;
@@ -141,7 +152,7 @@ main {
 /* 탭바 */
 .tabbar {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 7;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--card); border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom);
   padding-left: env(safe-area-inset-left, 0px);
@@ -267,3 +278,54 @@ input[type=number], input[type=text], select {
 .ex-kcal { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ex-kcal b { display: block; font-size: 17px; color: var(--accent); }
 .ex-kcal small { font-size: 11px; color: var(--muted); }
+
+/* 백업 알림 */
+.banner.warn { background: var(--warn-soft); margin: 12px 0; }
+.banner.warn p { margin: 0 0 4px; line-height: 1.5; }
+.banner.warn .btn-row { margin-bottom: 0; }
+
+/* 기록 화면 루틴 */
+.day-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 4px; }
+.card.suggest { border: 1px dashed var(--accent); }
+.card.suggest .btn-row { margin-bottom: 0; }
+.set-chip.done { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+/* 루틴 탭 */
+.routine-list { list-style: none; padding: 0; margin: 0; }
+.routine-card { cursor: pointer; }
+.routine-lines { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 4px; }
+.routine-lines li { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.routine-lines small { text-align: right; min-width: 0; }
+.routine-card .btn-row { margin-bottom: 0; }
+.field { display: block; margin: 10px 0; font-size: 14px; }
+.chips.wrap { flex-wrap: wrap; overflow: visible; }
+.routine-items { margin-top: 8px; }
+
+/* 세트 완료 체크 */
+.chk {
+  width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--line);
+  background: transparent; color: var(--muted); font-size: 16px; cursor: pointer;
+}
+.chk.on { background: var(--good); border-color: var(--good); color: var(--on-accent); }
+.sets td.chk-col, .sets th.chk-col { width: 44px; text-align: center; }
+.routine-mode .chk-col { display: none; }
+
+/* 휴식 타이머 */
+.timer {
+  position: fixed; z-index: 35; left: 50%; transform: translateX(-50%);
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  display: flex; align-items: center; gap: 6px;
+  background: var(--text); color: var(--bg);
+  padding: 6px 6px 6px 14px; border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.25); font-variant-numeric: tabular-nums;
+}
+.timer b { font-size: 20px; min-width: 52px; }
+.timer .timer-label { font-size: 13px; opacity: .8; white-space: nowrap; }
+.timer button {
+  border: 0; border-radius: 999px; padding: 6px 10px; cursor: pointer;
+  background: color-mix(in srgb, var(--bg) 18%, transparent); color: var(--bg); font-size: 13px;
+}
+.timer.done { background: var(--good); color: var(--on-accent); animation: pulse 1s ease-in-out 3; }
+.timer.done button { color: var(--on-accent); }
+@keyframes pulse { 50% { transform: translateX(-50%) scale(1.06); } }
+@media (prefers-reduced-motion: reduce) { .timer.done { animation: none; } }

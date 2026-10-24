@@ -16,7 +16,16 @@
 <body>
   <header class="topbar">
     <h1 id="view-title">오늘의 운동</h1>
+    <button class="icon-btn timer-btn" id="timer-btn" aria-label="휴식 타이머 시작">⏱</button>
   </header>
+
+  <div class="timer hidden" id="timer" role="timer" aria-live="polite">
+    <span class="timer-label" id="timer-label">휴식</span>
+    <b id="timer-time">1:30</b>
+    <button id="timer-minus" aria-label="15초 줄이기">−15</button>
+    <button id="timer-plus" aria-label="15초 늘리기">+15</button>
+    <button id="timer-stop" aria-label="타이머 끄기">✕</button>
+  </div>
 
   <main id="app">
     <!-- 오늘 / 날짜별 기록 -->
@@ -34,6 +43,18 @@
       <div class="summary card" id="day-summary"></div>
       <div id="weight-banner" class="banner hidden">
         정확한 칼로리 추정을 위해 <b>설정</b>에서 체중을 입력해주세요.
+      </div>
+      <div id="backup-banner" class="banner warn hidden">
+        <p id="backup-text"></p>
+        <div class="btn-row">
+          <button class="btn primary" id="backup-now">지금 백업</button>
+          <button class="btn" id="backup-later">내일 다시 알림</button>
+        </div>
+      </div>
+      <div id="routine-suggest"></div>
+      <div class="day-actions">
+        <button class="chip" id="load-routine-btn">📋 루틴 불러오기</button>
+        <button class="chip hidden" id="save-routine-btn">이 기록을 루틴으로 저장</button>
       </div>
       <ul class="entry-list" id="entry-list"></ul>
       <p class="empty hidden" id="day-empty">기록된 운동이 없습니다.<br>아래 <b>＋</b> 버튼으로 추가하세요.</p>
@@ -65,6 +86,14 @@
       </div>
     </section>
 
+    <!-- 루틴 -->
+    <section id="view-routines" class="view">
+      <p class="muted small">요일별·분할별 루틴을 만들어 두면, 기록 화면에서 한 번에 불러올 수 있습니다. 요일을 지정하면 그 요일에 자동으로 추천됩니다.</p>
+      <ul id="routine-list" class="routine-list"></ul>
+      <p class="empty hidden" id="routine-empty">아직 루틴이 없습니다.<br>아래 <b>＋</b> 버튼으로 만들거나, 기록 화면에서 <b>이 기록을 루틴으로 저장</b>을 눌러보세요.</p>
+      <button class="fab" id="add-routine-btn" aria-label="루틴 만들기">＋</button>
+    </section>
+
     <!-- 운동 목록 -->
     <section id="view-exercises" class="view">
       <input type="search" id="ex-search" class="search" placeholder="운동 검색">
@@ -78,8 +107,10 @@
       <form class="card form" id="settings-form">
         <h3>내 정보 · 계산 설정</h3>
         <label>체중 (kg)<input type="number" name="bodyWeight" inputmode="decimal" step="0.1" min="20" max="300"></label>
+        <label>키 (cm) <small>선택 · 근력운동 이동거리 보정</small><input type="number" name="heightCm" inputmode="decimal" step="0.1" min="120" max="230"></label>
         <label>1회 반복 소요시간 (초)<input type="number" name="secPerRep" inputmode="decimal" step="0.5" min="1" max="10"></label>
-        <label>세트 간 휴식 (초)<input type="number" name="restSec" inputmode="numeric" step="5" min="0" max="600"></label>
+        <label>세트 간 휴식 (초) <small>휴식 타이머 기본값</small><input type="number" name="restSec" inputmode="numeric" step="5" min="0" max="600"></label>
+        <label class="row">휴식 끝 알림음 · 진동<input type="checkbox" name="timerSound"></label>
         <label class="row">중량(볼륨) 보정 사용<input type="checkbox" name="volumeCorrection"></label>
         <label>근육 효율 (%) <small>보정 계산용, 기본 25</small><input type="number" name="efficiencyPct" inputmode="numeric" step="1" min="10" max="40"></label>
         <button type="submit" class="btn primary">저장</button>
@@ -112,6 +143,9 @@
           · Robergs 2007: 스쿼트 11~18, 벤치프레스 8~16 kcal/분 (1RM 40~70%)<br>
           · Reis 2017 (PLOS ONE): 하체 운동이 가장 높고, 바이셉스 컬·랫풀다운은 약 3~4 kcal/분<br>
           · 연구가 없는 동작은 근육량이 비슷한 동작을 기준으로 추정했습니다 (운동목록에 근거 표시).</p>
+        <p><b>⑤ 키 보정</b><br>
+          운동별 이동거리(ROM)는 키 175cm 기준입니다. 키를 입력하면 이동거리를 키에 비례해 조정합니다 (예: 185cm → ×1.06).
+          MET 계산 자체는 체중 1kg당 값이라 키의 영향을 받지 않습니다.</p>
         <p class="muted">MET 값은 Compendium of Physical Activities를 참고한 추정치이며, 실제 소모량은 개인차(심박수, 근육량, 템포 등)에 따라 ±30% 이상 차이 날 수 있습니다.</p>
       </div>
     </section>
@@ -120,6 +154,7 @@
   <nav class="tabbar">
     <button data-view="day" class="active"><span>📅</span>기록</button>
     <button data-view="stats"><span>📊</span>통계</button>
+    <button data-view="routines"><span>📋</span>루틴</button>
     <button data-view="exercises"><span>🏋️</span>운동목록</button>
     <button data-view="settings"><span>⚙️</span>설정</button>
   </nav>
@@ -147,16 +182,20 @@
       </div>
       <p class="muted small" id="last-record"></p>
       <table class="sets">
-        <thead><tr><th>세트</th><th>kg</th><th>회</th><th></th></tr></thead>
+        <thead><tr><th>세트</th><th>kg</th><th>회</th><th class="chk-col">완료</th><th></th></tr></thead>
         <tbody id="sets-body"></tbody>
       </table>
-      <button class="btn" id="add-set-btn">＋ 세트 추가</button>
+      <div class="btn-row">
+        <button class="btn" id="add-set-btn">＋ 세트 추가</button>
+        <button class="btn chk-col" id="rest-btn">⏱ 휴식 시작</button>
+      </div>
+      <p class="muted small chk-col">세트를 마치고 ✓를 누르면 휴식 타이머가 시작되고 바로 저장됩니다.</p>
     </div>
     <div id="time-form" class="hidden">
       <label>운동 시간 (분)<input type="number" id="t-minutes" inputmode="decimal" step="1" min="1"></label>
       <label>거리 (km, 선택)<input type="number" id="t-km" inputmode="decimal" step="0.1" min="0"></label>
     </div>
-    <label>메모<input type="text" id="entry-note" maxlength="100" placeholder="선택 입력"></label>
+    <label id="entry-note-wrap">메모<input type="text" id="entry-note" maxlength="100" placeholder="선택 입력"></label>
     <div class="estimate" id="entry-estimate"></div>
     <div class="btn-row">
       <button class="btn danger hidden" id="entry-delete">삭제</button>
@@ -197,6 +236,28 @@
         <button class="btn primary grow" id="ask-ok">확인</button>
       </div>
     </div>
+  </div>
+
+  <!-- 바텀시트: 루틴 편집 -->
+  <div class="sheet hidden" id="routine-sheet" role="dialog" aria-label="루틴 편집">
+    <div class="sheet-head"><h2 id="routine-sheet-title">루틴 만들기</h2><button class="icon-btn close-sheet" aria-label="닫기">✕</button></div>
+    <label class="field">루틴 이름<input type="text" id="routine-name" maxlength="30" placeholder="예: 가슴·삼두 Day"></label>
+    <div class="field">반복 요일 <small class="muted">선택 · 해당 요일에 기록 화면에서 추천</small>
+      <div class="chips wrap" id="routine-days"></div>
+    </div>
+    <ul id="routine-items" class="ex-list routine-items"></ul>
+    <button class="btn" id="routine-add-ex">＋ 운동 추가</button>
+    <div class="estimate" id="routine-estimate"></div>
+    <div class="btn-row">
+      <button class="btn danger hidden" id="routine-delete">삭제</button>
+      <button class="btn primary grow" id="routine-save">루틴 저장</button>
+    </div>
+  </div>
+
+  <!-- 바텀시트: 루틴 불러오기 -->
+  <div class="sheet hidden" id="routine-pick-sheet" role="dialog" aria-label="루틴 불러오기">
+    <div class="sheet-head"><h2>루틴 불러오기</h2><button class="icon-btn close-sheet" aria-label="닫기">✕</button></div>
+    <ul id="routine-pick-list" class="ex-list"></ul>
   </div>
 
   <div class="toast hidden" id="toast"></div>
