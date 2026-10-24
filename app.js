@@ -845,25 +845,38 @@ function primeAudio() {
   } catch (e) { timer.audio = null; }
 }
 
-function alertTimer() {
+// tones: [[주파수Hz, 시작 오프셋초, 길이초], ...]
+function playTones(tones, vibrate) {
   if (!state.settings.timerSound) return;
-  try { if (navigator.vibrate) navigator.vibrate([250, 120, 250, 120, 250]); } catch (e) { /* 진동 미지원 */ }
+  try { if (vibrate && navigator.vibrate) navigator.vibrate(vibrate); } catch (e) { /* 진동 미지원 */ }
   const ctx = timer.audio;
   if (!ctx) return;
   try {
     const t0 = ctx.currentTime;
-    for (let i = 0; i < 3; i++) {
-      const at = t0 + i * 0.35;
+    for (const [freq, offset, len] of tones) {
+      const at = t0 + offset;
       const osc = ctx.createOscillator(), gain = ctx.createGain();
-      osc.frequency.value = 880;
+      osc.frequency.value = freq;
       gain.gain.setValueAtTime(0.0001, at);
       gain.gain.exponentialRampToValueAtTime(0.4, at + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.25);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + len);
       osc.connect(gain).connect(ctx.destination);
       osc.start(at);
-      osc.stop(at + 0.3);
+      osc.stop(at + len + 0.05);
     }
   } catch (e) { /* 소리 재생 불가 */ }
+}
+
+const SOUNDS = {
+  tick: [[[660, 0, 0.12]], null],
+  go: [[[990, 0, 0.45]], [300]],
+  rest: [[[440, 0, 0.45]], [150, 80, 150]],
+  end: [[[880, 0, 0.25], [880, 0.35, 0.25], [1175, 0.7, 0.5]], [250, 120, 250, 120, 400]],
+};
+const sound = name => playTones(...SOUNDS[name]);
+
+function alertTimer() {
+  playTones([[880, 0, 0.25], [880, 0.35, 0.25], [880, 0.7, 0.25]], [250, 120, 250, 120, 250]);
 }
 
 // ---------- 루틴 ----------
@@ -1148,6 +1161,213 @@ async function deleteCircuit() {
   renderDay();
 }
 
+// ---------- 라운드 타이머 ----------
+// 시작 시각 기준으로 경과 시간을 계산하므로, 화면이 잠깐 가려져도 시간은 정확
+const RT_PREP_SEC = 10;
+const RT_MODES = {
+  fortime: {
+    desc: '정해진 라운드를 쉬지 않고 최대한 빨리. 한 라운드를 마칠 때마다 ＋1을 누르세요. 목표 라운드에 도달하면 자동으로 끝납니다 (0이면 직접 종료).',
+    fields: [['rounds', '목표 라운드', 7, '라운드']],
+  },
+  amrap: {
+    desc: '정해진 시간 동안 최대한 많은 라운드. 한 라운드를 마칠 때마다 ＋1을 누르세요.',
+    fields: [['minutes', '총 시간', 20, '분']],
+  },
+  emom: {
+    desc: '간격이 시작될 때마다 정해진 동작을 하고, 남은 시간은 쉽니다. 매 간격 시작에 알림음.',
+    fields: [['interval', '간격', 60, '초'], ['rounds', '라운드', 10, '라운드']],
+  },
+  tabata: {
+    desc: '운동과 휴식을 번갈아 반복합니다. 기본은 20초 운동 / 10초 휴식 × 8라운드.',
+    fields: [['work', '운동', 20, '초'], ['rest', '휴식', 10, '초'], ['rounds', '라운드', 8, '라운드']],
+  },
+};
+let rt = null; // 진행 중인 타이머
+
+function rtConfig() {
+  const saved = state.settings.roundTimer || {};
+  const mode = RT_MODES[saved.mode] ? saved.mode : 'fortime';
+  const cfgs = {};
+  for (const [m, def] of Object.entries(RT_MODES)) {
+    cfgs[m] = Object.fromEntries(def.fields.map(([k, , d]) => [k, (saved.cfgs && saved.cfgs[m] && saved.cfgs[m][k]) ?? d]));
+  }
+  const last = lastCircuit();
+  if (last && !(saved.cfgs && saved.cfgs.fortime)) cfgs.fortime.rounds = last.rounds;
+  return { mode, cfgs };
+}
+
+function openRoundTimer() {
+  closeSheets();
+  rtSetup = rtConfig();
+  showRtPanel('setup');
+  renderRtSetup();
+  $('#rt').classList.remove('hidden');
+  document.body.classList.add('rt-open');
+  keepScreenOn();
+}
+
+let rtSetup = null;
+function renderRtSetup() {
+  const { mode, cfgs } = rtSetup;
+  document.querySelectorAll('#rt-modes button').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  $('#rt-desc').textContent = RT_MODES[mode].desc;
+  $('#rt-fields').innerHTML = RT_MODES[mode].fields.map(([k, label, , unit]) => `
+    <label class="field">${label} <small class="muted">${unit}</small>
+      <input type="number" inputmode="numeric" min="0" max="999" data-k="${k}" value="${cfgs[mode][k]}"></label>`).join('');
+}
+
+function showRtPanel(name) {
+  ['setup', 'run', 'done'].forEach(n => $(`#rt-${n}`).classList.toggle('hidden', n !== name));
+}
+
+function startRoundTimer() {
+  primeAudio();
+  const { mode, cfgs } = rtSetup;
+  state.settings.roundTimer = rtSetup;
+  save('meta');
+  rt = { mode, cfg: { ...cfgs[mode] }, startAt: Date.now(), pausedAt: 0, pausedTotal: 0, rounds: 0, lastKey: '', lastCount: 0, cur: {} };
+  const tapping = mode === 'fortime' || mode === 'amrap';
+  $('#rt-tap').classList.toggle('hidden', !tapping);
+  $('#rt-undo').classList.toggle('hidden', !tapping);
+  $('#rt-pause').textContent = '일시정지';
+  showRtPanel('run');
+  clearInterval(rt.iv);
+  rt.iv = setInterval(rtTick, 200);
+  rtTick();
+}
+
+function rtElapsed() {
+  const paused = rt.pausedTotal + (rt.pausedAt ? Date.now() - rt.pausedAt : 0);
+  return (Date.now() - rt.startAt - paused) / 1000;
+}
+
+// 현재 상태 계산: phase(prep/run/work/rest), 표시할 초, 라운드
+function rtState() {
+  const e = rtElapsed(), c = rt.cfg;
+  if (e < RT_PREP_SEC) return { phase: 'prep', remain: RT_PREP_SEC - e, t: 0 };
+  const t = e - RT_PREP_SEC;
+  if (rt.mode === 'fortime') {
+    const done = c.rounds > 0 && rt.rounds >= c.rounds;
+    return { phase: 'run', up: t, t, done };
+  }
+  if (rt.mode === 'amrap') {
+    const total = c.minutes * 60;
+    return { phase: 'run', remain: total - t, t: Math.min(t, total), done: t >= total };
+  }
+  if (rt.mode === 'emom') {
+    const total = c.interval * c.rounds;
+    const idx = Math.min(Math.floor(t / c.interval), c.rounds - 1);
+    return { phase: 'work', remain: c.interval - (t - idx * c.interval), round: idx + 1, completed: idx + 1, t: Math.min(t, total), done: t >= total };
+  }
+  const cycle = c.work + c.rest;
+  const total = cycle * c.rounds - c.rest; // 마지막 휴식은 생략
+  const idx = Math.floor(t / cycle);
+  const within = t - idx * cycle;
+  const work = within < c.work;
+  return {
+    phase: work ? 'work' : 'rest', remain: work ? c.work - within : cycle - within,
+    round: Math.min(idx + 1, c.rounds), completed: Math.min(idx + (work ? 0 : 1), c.rounds),
+    t: Math.min(t, total), done: t >= total,
+  };
+}
+
+const PHASE_LABEL = { prep: '준비', run: '진행 중', work: '운동', rest: '휴식' };
+
+function rtTick() {
+  if (!rt || rt.pausedAt) return;
+  const st = rtState();
+  rt.cur = st;
+  if (st.done) return finishRoundTimer();
+  const key = `${st.phase}-${st.round || 0}`;
+  if (key !== rt.lastKey) {
+    if (rt.lastKey) sound(st.phase === 'rest' ? 'rest' : 'go');
+    rt.lastKey = key;
+    rt.lastCount = 0;
+  }
+  if (st.remain !== undefined) {
+    const s = Math.ceil(st.remain);
+    if (s <= 3 && s >= 1 && s !== rt.lastCount) { sound('tick'); rt.lastCount = s; }
+  }
+  renderRtRun(st);
+}
+
+function renderRtRun(st) {
+  const c = rt.cfg;
+  $('#rt-face').dataset.phase = st.phase;
+  $('#rt-phase').textContent = PHASE_LABEL[st.phase];
+  $('#rt-clock').textContent = fmtClock(Math.max(0, st.up !== undefined ? Math.floor(st.up) : Math.ceil(st.remain)));
+  let round = '', next = '';
+  if (st.phase === 'prep') round = rt.mode === 'tabata' || rt.mode === 'emom' ? `총 ${c.rounds}라운드` : '';
+  else if (rt.mode === 'fortime') round = `${rt.rounds}${c.rounds ? ` / ${c.rounds}` : ''} 라운드 완료`;
+  else if (rt.mode === 'amrap') round = `${rt.rounds} 라운드 완료`;
+  else round = `${st.round} / ${c.rounds} 라운드`;
+  if (rt.mode === 'amrap' && st.phase === 'run') next = `경과 ${fmtClock(Math.floor(st.t))}`;
+  if (rt.mode === 'fortime' && rt.rounds > 0 && st.phase === 'run') next = `라운드 평균 ${fmtClock(Math.round(st.t / rt.rounds))}`;
+  $('#rt-round').textContent = round;
+  $('#rt-next').textContent = next;
+}
+
+function tapRound(delta) {
+  if (!rt || rt.pausedAt || rt.cur.phase === 'prep') return;
+  rt.rounds = Math.max(0, rt.rounds + delta);
+  if (delta > 0) sound('tick');
+  rtTick();
+}
+
+function togglePause() {
+  if (!rt) return;
+  if (rt.pausedAt) {
+    rt.pausedTotal += Date.now() - rt.pausedAt;
+    rt.pausedAt = 0;
+    $('#rt-pause').textContent = '일시정지';
+    rtTick();
+  } else {
+    rt.pausedAt = Date.now();
+    $('#rt-pause').textContent = '계속';
+    $('#rt-phase').textContent = '일시정지';
+  }
+}
+
+function finishRoundTimer() {
+  clearInterval(rt.iv);
+  if (rt.pausedAt) { rt.pausedTotal += Date.now() - rt.pausedAt; rt.pausedAt = 0; }
+  const st = rtState();
+  const tapped = rt.mode === 'fortime' || rt.mode === 'amrap';
+  rt.result = { seconds: Math.round(st.t), rounds: tapped ? rt.rounds : (st.completed || 0) };
+  sound('end');
+  $('#rt-done-time').textContent = fmtClock(rt.result.seconds);
+  $('#rt-done-rounds').textContent = `${rt.result.rounds} 라운드`;
+  showRtPanel('done');
+}
+
+async function stopRoundTimer() {
+  if (!rt) return;
+  if (rt.cur.phase === 'prep') { clearInterval(rt.iv); rt = null; return showRtPanel('setup'); }
+  if (!await ask('여기서 끝내고 결과를 볼까요?')) return;
+  finishRoundTimer();
+}
+
+async function closeRoundTimer() {
+  if (rt && !rt.result && rt.cur.phase !== 'prep' && !await ask('진행 중인 타이머를 끝낼까요? 결과는 저장되지 않습니다.')) return;
+  if (rt) clearInterval(rt.iv);
+  rt = null;
+  $('#rt').classList.add('hidden');
+  document.body.classList.remove('rt-open');
+}
+
+// 결과를 서킷 기록으로: 라운드 수와 시간(분)을 채워서 서킷 입력 화면을 염
+function logRoundTimer() {
+  const { seconds, rounds } = rt.result;
+  rt = null;
+  $('#rt').classList.add('hidden');
+  document.body.classList.remove('rt-open');
+  editorMode = 'log';
+  openCircuitEditor(null);
+  $('#c-rounds').value = rounds;
+  $('#c-minutes').value = Math.round((seconds / 60) * 10) / 10;
+  updateCircuitEstimate();
+}
+
 // ---------- 화면 꺼짐 방지 ----------
 // Screen Wake Lock: 앱이 화면에 보이는 동안만 유지되고, 다른 앱으로 가면 자동 해제 → 돌아오면 다시 요청
 let wakeLock = null;
@@ -1298,6 +1518,7 @@ $('#rest-btn').onclick = () => startTimer();
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;
   if (timer.iv) tickTimer();
+  if (rt && rt.iv && !rt.result) rtTick();
   keepScreenOn();
 });
 // 일부 브라우저(iOS Safari)는 사용자가 화면을 누른 순간에만 화면 꺼짐 방지를 허용
@@ -1380,6 +1601,33 @@ $('#c-add-move').onclick = () => { addCircuitMove(); renderCircuitMoves(); };
 ['#c-name', '#c-rounds', '#c-minutes'].forEach(id => { $(id).oninput = updateCircuitEstimate; });
 $('#c-met').onchange = updateCircuitEstimate;
 $('#c-save').onclick = saveCircuit;
+$('#c-timer').onclick = openRoundTimer;
+
+$('#rt-open-btn').onclick = openRoundTimer;
+$('#rt-close').onclick = closeRoundTimer;
+$('#rt-modes').onclick = ev => {
+  const b = ev.target.closest('[data-mode]');
+  if (!b) return;
+  rtSetup.mode = b.dataset.mode;
+  renderRtSetup();
+};
+$('#rt-fields').oninput = ev => {
+  const k = ev.target.dataset.k;
+  if (k) rtSetup.cfgs[rtSetup.mode][k] = Math.max(0, Number(ev.target.value) || 0);
+};
+$('#rt-start').onclick = () => {
+  const c = rtSetup.cfgs[rtSetup.mode];
+  const bad = RT_MODES[rtSetup.mode].fields.some(([k]) => k !== 'rounds' && k !== 'rest' && !c[k])
+    || (rtSetup.mode !== 'fortime' && !c.rounds && 'rounds' in c);
+  if (bad) return toast('시간과 라운드를 입력하세요');
+  startRoundTimer();
+};
+$('#rt-tap').onclick = () => tapRound(1);
+$('#rt-undo').onclick = () => tapRound(-1);
+$('#rt-pause').onclick = togglePause;
+$('#rt-stop').onclick = stopRoundTimer;
+$('#rt-log').onclick = logRoundTimer;
+$('#rt-again').onclick = () => { rt = null; showRtPanel('setup'); renderRtSetup(); };
 $('#c-delete').onclick = deleteCircuit;
 
 $('#settings-form').onsubmit = saveSettings;

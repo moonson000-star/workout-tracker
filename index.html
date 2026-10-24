@@ -54,6 +54,7 @@
       </div>
       <div id="routine-suggest"></div>
       <div class="day-actions">
+        <button class="chip" id="rt-open-btn">⚡ 라운드 타이머</button>
         <button class="chip" id="load-routine-btn">📋 루틴 불러오기</button>
         <button class="chip hidden" id="save-routine-btn">이 기록을 루틴으로 저장</button>
       </div>
@@ -292,6 +293,7 @@
       <label class="field">총 시간 (분)<input type="number" id="c-minutes" inputmode="decimal" min="1" max="180"></label>
     </div>
     <label class="field">강도<select id="c-met"></select></label>
+    <button class="btn" id="c-timer">⚡ 라운드 타이머로 하기</button>
     <p class="field-title">1라운드 구성 <small class="muted">kg은 기구 1개 무게</small></p>
     <table class="sets moves">
       <thead><tr><th>동작</th><th>kg</th><th>회</th><th></th></tr></thead>
@@ -303,6 +305,48 @@
     <div class="btn-row">
       <button class="btn danger hidden" id="c-delete">삭제</button>
       <button class="btn primary grow" id="c-save">저장</button>
+    </div>
+  </div>
+
+  <!-- 라운드 타이머 (전체 화면) -->
+  <div class="rt hidden" id="rt" role="dialog" aria-label="라운드 타이머">
+    <div class="rt-head"><h2>라운드 타이머</h2><button class="icon-btn" id="rt-close" aria-label="닫기">✕</button></div>
+
+    <div id="rt-setup" class="rt-body">
+      <div class="seg" id="rt-modes">
+        <button data-mode="fortime">For Time</button>
+        <button data-mode="amrap">AMRAP</button>
+        <button data-mode="emom">EMOM</button>
+        <button data-mode="tabata">타바타</button>
+      </div>
+      <p class="rt-desc" id="rt-desc"></p>
+      <div class="rt-fields" id="rt-fields"></div>
+      <button class="btn primary big" id="rt-start">시작 · 10초 준비</button>
+    </div>
+
+    <div id="rt-run" class="rt-body hidden">
+      <div class="rt-face" id="rt-face">
+        <div class="rt-phase" id="rt-phase">준비</div>
+        <div class="rt-clock" id="rt-clock">0:10</div>
+        <div class="rt-round" id="rt-round"></div>
+        <div class="rt-next" id="rt-next"></div>
+      </div>
+      <button class="rt-tap" id="rt-tap">＋1 라운드 완료</button>
+      <div class="btn-row">
+        <button class="btn grow" id="rt-undo">−1 라운드</button>
+        <button class="btn grow" id="rt-pause">일시정지</button>
+        <button class="btn danger grow" id="rt-stop">종료</button>
+      </div>
+    </div>
+
+    <div id="rt-done" class="rt-body hidden">
+      <div class="rt-face done">
+        <div class="rt-phase">완료</div>
+        <div class="rt-clock" id="rt-done-time"></div>
+        <div class="rt-round" id="rt-done-rounds"></div>
+      </div>
+      <button class="btn primary big" id="rt-log">서킷으로 기록하기</button>
+      <button class="btn big" id="rt-again">다시 설정</button>
     </div>
   </div>
 
