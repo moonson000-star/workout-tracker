@@ -27,6 +27,11 @@
     <button id="timer-stop" aria-label="타이머 끄기">✕</button>
   </div>
 
+  <div class="update-banner hidden" id="update-banner" role="status">
+    <span>새 버전이 있습니다</span>
+    <button class="btn primary" id="update-now">지금 업데이트</button>
+  </div>
+
   <main id="app">
     <!-- 오늘 / 날짜별 기록 -->
     <section id="view-day" class="view active">
@@ -387,8 +392,8 @@
         <li>동작 추가 → <b>통계 계산</b> → <b>합계</b> (입력: 위의 건강 샘플)</li>
         <li>2~3번을 한 번 더: 유형만 <b>활동 에너지</b>로 바꿔서 추가 (선택)</li>
         <li>동작 추가 → <b>텍스트</b>에 아래처럼 입력하고, 괄호 부분은 변수로 넣기
-          <code>wt;date=[현재 날짜];steps=[걸음 합계];kcal=[활동 에너지 합계]</code>
-          · [ ] 부분은 글자로 치지 말고, 그 자리에 커서를 두고 키보드 위 <b>변수 선택</b>으로 파란 변수를 넣으세요 (날짜 형식은 기본값 그대로 두어도 됩니다)</li>
+          <code>wt;date=🔵현재 날짜;steps=🔵걸음;kcal=🔵활동 에너지</code>
+          · 🔵 부분은 글자로 치지 말고, 그 자리에 커서를 두고 키보드 위 <b>변수 선택</b>으로 파란 변수를 넣으세요 (괄호는 필요 없고, 날짜 형식은 기본값 그대로 두어도 됩니다)</li>
         <li>동작 추가 → <b>클립보드에 복사</b></li>
         <li>처음 실행할 때 <b>건강 데이터 읽기 허용</b>을 눌러주세요</li>
       </ol>

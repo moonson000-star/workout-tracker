@@ -409,3 +409,12 @@ textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border
 .guide p { margin: 6px 0 0; }
 
 textarea::placeholder, input::placeholder { color: var(--muted); opacity: .6; font-style: italic; }
+
+/* 새 버전 알림 */
+.update-banner {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 8;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin: 0 auto; max-width: 640px; padding: 8px 12px;
+  background: var(--accent-soft); color: var(--text); font-size: 14px;
+}
+.update-banner .btn { padding: 6px 12px; }

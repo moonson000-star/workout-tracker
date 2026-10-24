@@ -361,7 +361,8 @@ function updateActivityPreview() {
 // 단축어 결과 예: "wt;date=2026-10-24;steps=8234;kcal=312.5" (순서·구분자 무관, 쉼표·단위 허용)
 // 날짜는 아이폰 기본 형식("2026. 10. 24.")이나 "2026년 10월 24일"도 인식
 function parseHealthText(text) {
-  const t = String(text || '').replace(/(\d),(?=\d{3})/g, '$1');
+  // 단축어 텍스트에 [ ] 괄호나 따옴표가 같이 들어가도 읽히도록 제거
+  const t = String(text || '').replace(/[[\]()"'“”]/g, '').replace(/(\d),(?=\d{3})/g, '$1');
   const num = keys => {
     const m = t.match(new RegExp(`(?:${keys})\\s*[=:]\\s*([\\d.]+)`, 'i'));
     return m ? Number(m[1]) : null;
@@ -377,8 +378,8 @@ function parseHealthText(text) {
 function applyHealthText(text) {
   const r = parseHealthText(text);
   if (r.steps == null && r.kcal == null) {
-    toast(/\[.*\]/.test(text)
-      ? '숫자 대신 [ ] 글자가 들어 있습니다. 단축어의 텍스트에서 [ ] 부분을 파란 변수로 바꿔주세요'
+    toast(/[가-힣]{2,}\s*[가-힣]*\]/.test(text) || /현재 날짜|합계\]/.test(text)
+      ? '숫자 대신 글자가 들어 있습니다. 단축어의 텍스트에서 해당 부분을 파란 변수로 바꿔주세요'
       : '걸음 수를 찾지 못했습니다. 단축어 결과를 그대로 붙여넣어 주세요');
     return false;
   }
@@ -403,6 +404,9 @@ async function pasteFromClipboard() {
 }
 
 function saveActivity() {
+  // 붙여넣기 칸에만 글자가 있고 숫자 칸이 비어 있으면 먼저 읽어 들임
+  const pasted = $('#act-paste').value.trim();
+  if (pasted && !$('#act-steps').value && !$('#act-kcal').value && !applyHealthText(pasted)) return;
   const steps = Number($('#act-steps').value) || 0;
   const activeKcal = Number($('#act-kcal').value) || 0;
   if (!steps && !activeKcal) return toast('걸음 수를 입력하세요');
@@ -1543,6 +1547,21 @@ function renderWakeStatus() {
         : '화면을 한 번 터치하면 켜집니다.';
 }
 
+// ---------- 새 버전 알림 ----------
+// 아이폰 홈 화면 앱은 닫지 않으면 예전 화면을 계속 띄우므로, 다시 볼 때 새 버전이 있는지 확인
+const APP_VERSION = '2026-10-24.9';
+let updateCheckedAt = 0;
+
+async function checkForUpdate() {
+  if (window.claude || location.protocol === 'file:' || Date.now() - updateCheckedAt < 60 * 1000) return;
+  updateCheckedAt = Date.now();
+  try {
+    const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+    const { version } = await res.json();
+    $('#update-banner').classList.toggle('hidden', !version || version === APP_VERSION);
+  } catch (e) { /* 오프라인 */ }
+}
+
 // ---------- 이벤트 ----------
 document.querySelector('.tabbar').onclick = ev => {
   const b = ev.target.closest('button[data-view]');
@@ -1663,6 +1682,7 @@ document.addEventListener('visibilitychange', () => {
   if (timer.iv) tickTimer();
   if (rt && rt.iv && !rt.result) rtTick();
   keepScreenOn();
+  checkForUpdate();
 });
 // 일부 브라우저(iOS Safari)는 사용자가 화면을 누른 순간에만 화면 꺼짐 방지를 허용
 document.addEventListener('pointerdown', () => keepScreenOn(), { passive: true });
@@ -1797,6 +1817,8 @@ $('#reset-btn').onclick = resetAll;
 importActivityFromUrl();
 render();
 initCloud();
+$('#update-now').onclick = () => location.reload();
+setTimeout(checkForUpdate, 2000);
 
 // 단독 PWA로 열 때만 오프라인 캐시 사용 (claude.ai 안에서는 window.claude가 있음)
 if ('serviceWorker' in navigator && location.protocol !== 'file:' && !window.claude) {
