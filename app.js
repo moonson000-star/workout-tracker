@@ -325,8 +325,13 @@ function renderActivityCard() {
   const a = state.activity[currentDate];
   const box = $('#activity-card');
   if (!a) {
-    box.innerHTML = `<div class="act-empty"><span>🚶 걸음 수</span>
-      <button class="chip" data-act="open">건강 앱에서 가져오기 · 직접 입력</button></div>`;
+    box.innerHTML = `<div class="act-empty">
+      <div class="act-empty-head"><span>🚶 걸음 수</span>
+        <button class="chip" data-act="open">직접 입력</button></div>
+      <textarea class="act-quick" rows="1" aria-label="단축어 결과 붙여넣기"
+        placeholder="길게 눌러 붙여넣기 → 바로 저장"></textarea>
+      <small class="muted">단축어를 먼저 실행한 뒤 붙여넣으세요</small>
+    </div>`;
     return;
   }
   const r = activityKcal(a, calcSettings());
@@ -416,6 +421,23 @@ function saveActivity() {
   closeSheets();
   renderDay();
   toast('걸음 수를 저장했습니다');
+}
+
+// 기록 화면 걸음 카드에서 바로 붙여넣기 → 저장
+function quickSaveActivity(text) {
+  const r = parseHealthText(text);
+  if (r.steps == null && r.kcal == null) {
+    toast('걸음 수를 찾지 못했습니다. 단축어를 실행한 뒤 다시 붙여넣어 주세요');
+    return false;
+  }
+  const date = r.date || currentDate;
+  state.activity[date] = { steps: Math.round(r.steps || 0), activeKcal: r.kcal ? Math.round(r.kcal) : null, at: Date.now() };
+  save(date);
+  currentDate = date;
+  document.activeElement && document.activeElement.blur();
+  renderDay();
+  toast(`${date.slice(5).replace('-', '/')} 걸음 ${fmt(r.steps || 0)}보를 저장했습니다. 카드를 누르면 수정할 수 있어요`);
+  return true;
 }
 
 async function deleteActivity() {
@@ -1549,7 +1571,7 @@ function renderWakeStatus() {
 
 // ---------- 새 버전 알림 ----------
 // 아이폰 홈 화면 앱은 닫지 않으면 예전 화면을 계속 띄우므로, 다시 볼 때 새 버전이 있는지 확인
-const APP_VERSION = '2026-10-24.10';
+const APP_VERSION = '2026-10-24.11';
 let updateCheckedAt = 0;
 
 async function checkForUpdate() {
@@ -1794,6 +1816,18 @@ $('#rt-again').onclick = () => { rt = null; showRtPanel('setup'); renderRtSetup(
 $('#c-delete').onclick = deleteCircuit;
 
 $('#activity-card').onclick = ev => { if (ev.target.closest('[data-act]')) openActivitySheet(); };
+$('#activity-card').addEventListener('paste', ev => {
+  if (!ev.target.classList.contains('act-quick')) return;
+  const text = ev.clipboardData && ev.clipboardData.getData('text');
+  if (!text) return; // 일부 브라우저는 붙여넣은 뒤 input 이벤트로 처리
+  ev.preventDefault();
+  if (!quickSaveActivity(text)) ev.target.value = text;
+});
+$('#activity-card').addEventListener('input', ev => {
+  if (!ev.target.classList.contains('act-quick')) return;
+  const v = ev.target.value;
+  if (/=\s*\[?\s*\d/.test(v) && /steps|kcal|걸음/i.test(v)) quickSaveActivity(v);
+});
 $('#act-clip').onclick = pasteFromClipboard;
 $('#act-paste').oninput = ev => { if (ev.target.value.trim()) applyHealthText(ev.target.value); };
 $('#act-paste').onpaste = ev => {
