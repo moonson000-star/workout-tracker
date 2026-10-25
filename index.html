@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="style.css?v=2026-10-24.11">
+  <link rel="stylesheet" href="style.css?v=2026-10-25.1">
 </head>
 <body>
   <header class="topbar">
@@ -71,6 +71,40 @@
 
     <!-- 통계 -->
     <section id="view-stats" class="view">
+      <div class="card">
+        <div class="period-head">
+          <div class="seg small" id="period-seg">
+            <button data-p="week" class="active">주간</button>
+            <button data-p="month">월간</button>
+          </div>
+          <div class="period-nav">
+            <button class="icon-btn" id="period-prev" aria-label="이전 기간">‹</button>
+            <b id="period-label"></b>
+            <button class="icon-btn" id="period-next" aria-label="다음 기간">›</button>
+          </div>
+        </div>
+        <div class="kpi-grid" id="kpi-grid"></div>
+        <p class="muted small" id="kpi-note"></p>
+      </div>
+
+      <div class="card">
+        <h3>부위별 운동량 <small class="muted" id="cat-period"></small></h3>
+        <div class="seg small" id="metric-seg">
+          <button data-m="sets" class="active">세트</button>
+          <button data-m="volume">볼륨</button>
+          <button data-m="kcal">칼로리</button>
+          <button data-m="minutes">시간</button>
+        </div>
+        <ul class="cat-bars" id="cat-bars"></ul>
+      </div>
+
+      <div class="card">
+        <h3>최근 12주 추이 <small class="muted" id="trend-unit"></small></h3>
+        <div class="trend-scroll"><div class="trend" id="trend"></div></div>
+        <div class="heat-legend" aria-hidden="true">적음 <i class="h1"></i><i class="h2"></i><i class="h3"></i><i class="h4"></i><i class="h5"></i> 많음</div>
+        <p class="trend-info" id="trend-info">막대나 칸을 누르면 값이 보입니다</p>
+      </div>
+
       <div class="seg" id="range-seg">
         <button data-range="7" class="active">7일</button>
         <button data-range="30">30일</button>
@@ -406,8 +440,8 @@
 
   <div class="toast hidden" id="toast"></div>
 
-  <script src="exercises.js?v=2026-10-24.11"></script>
-  <script src="calc.js?v=2026-10-24.11"></script>
-  <script src="app.js?v=2026-10-24.11"></script>
+  <script src="exercises.js?v=2026-10-25.1"></script>
+  <script src="calc.js?v=2026-10-25.1"></script>
+  <script src="app.js?v=2026-10-25.1"></script>
 </body>
 </html>

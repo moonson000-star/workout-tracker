@@ -675,7 +675,157 @@ async function deleteDraft() {
 let statRange = 7;
 let calMonth = (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
 
+// ---------- 기간·부위별 통계 ----------
+// 주는 월요일 시작. 서킷은 동작별로 부위를 나누고, 칼로리·시간은 동작별 일(J) 비율로 배분
+const METRICS = {
+  sets: { label: '세트', unit: '세트', digits: 0 },
+  volume: { label: '볼륨', unit: 'kg', digits: 0 },
+  kcal: { label: '칼로리', unit: 'kcal', digits: 0 },
+  minutes: { label: '시간', unit: '분', digits: 0 },
+};
+let statPeriod = 'week';
+let statOffset = 0;
+let statMetric = 'sets';
+
+function weekStart(date) {
+  const d = parseYmd(date);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return ymd(d);
+}
+
+function periodRange(kind, offset) {
+  const today = ymd(new Date());
+  if (kind === 'week') {
+    const from = addDays(weekStart(today), offset * 7);
+    const to = addDays(from, 6);
+    const f = parseYmd(from), t = parseYmd(to);
+    const label = offset === 0 ? '이번 주' : offset === -1 ? '지난주' : `${f.getMonth() + 1}/${f.getDate()}~${t.getMonth() + 1}/${t.getDate()}`;
+    return { from, to, label };
+  }
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  const last = new Date(first.getFullYear(), first.getMonth() + 1, 0);
+  return { from: ymd(first), to: ymd(last), label: `${first.getFullYear()}년 ${first.getMonth() + 1}월` };
+}
+
+function aggregate(from, to) {
+  const s = calcSettings();
+  const out = { days: 0, kcal: 0, steps: 0, sets: 0, volume: 0, minutes: 0, cats: {} };
+  const bucket = c => out.cats[c] || (out.cats[c] = { sets: 0, volume: 0, kcal: 0, minutes: 0 });
+  for (const [date, list] of Object.entries(state.logs)) {
+    if (date < from || date > to || !list.length) continue;
+    out.days++;
+    for (const e of list) {
+      const r = estimateEntry(e, s);
+      out.kcal += r.total;
+      out.volume += r.volume;
+      out.minutes += r.minutes;
+      const moves = e.type === 'circuit' ? (e.moves || []).filter(m => Number(m.reps) > 0) : [];
+      if (!moves.length) {
+        const b = bucket(e.cat || '기타');
+        b.sets += r.sets; b.volume += r.volume; b.kcal += r.total; b.minutes += r.minutes;
+        continue;
+      }
+      const rounds = Number(e.rounds) || 0;
+      const works = moves.map(m => workJoules(m, m.kg, m.reps, s.bodyWeight, 1) || 1);
+      const totalWork = works.reduce((a, w) => a + w, 0);
+      moves.forEach((m, i) => {
+        const b = bucket(m.cat || e.cat || '전신');
+        const share = works[i] / totalWork;
+        b.sets += rounds;
+        b.volume += rounds * liftedVolume(m, m.kg, m.reps);
+        b.kcal += r.total * share;
+        b.minutes += r.minutes * share;
+      });
+    }
+  }
+  out.sets = Object.values(out.cats).reduce((a, b) => a + b.sets, 0);
+  for (const [date, a] of Object.entries(state.activity || {})) {
+    if (date >= from && date <= to) out.steps += Number(a.steps) || 0;
+  }
+  return out;
+}
+
+function deltaBadge(cur, prev) {
+  if (!prev) return cur ? '<small class="delta new">새 기록</small>' : '<small class="delta">–</small>';
+  const pct = ((cur - prev) / prev) * 100;
+  if (Math.abs(pct) < 0.5) return '<small class="delta">변화 없음</small>';
+  return pct > 0
+    ? `<small class="delta up">▲ ${fmt(pct)}%</small>`
+    : `<small class="delta down">▼ ${fmt(-pct)}%</small>`;
+}
+
+function renderPeriodStats() {
+  const cur = periodRange(statPeriod, statOffset);
+  const prev = periodRange(statPeriod, statOffset - 1);
+  const a = aggregate(cur.from, cur.to), b = aggregate(prev.from, prev.to);
+  $('#period-label').textContent = cur.label;
+  $('#period-next').disabled = statOffset >= 0;
+  document.querySelectorAll('#period-seg button').forEach(x => x.classList.toggle('active', x.dataset.p === statPeriod));
+  const tiles = [
+    ['운동한 날', a.days, b.days, '일', 0],
+    ['운동 칼로리', a.kcal, b.kcal, 'kcal', 0],
+    ['걸음', a.steps, b.steps, '보', 0],
+    ['세트', a.sets, b.sets, '세트', 0],
+    ['볼륨', a.volume, b.volume, 'kg', 0],
+    ['운동 시간', a.minutes, b.minutes, '분', 0],
+  ];
+  $('#kpi-grid').innerHTML = tiles.map(([label, v, pv, unit, d]) => `
+    <div class="kpi"><span>${label}</span><b>${fmt(v, d)}<small>${unit}</small></b>${deltaBadge(v, pv)}</div>`).join('');
+  $('#kpi-note').textContent = `${statPeriod === 'week' ? '지난 기간' : '전월'}(${prev.label}) 대비 · 서킷은 동작 × 라운드를 세트로 셉니다`;
+  renderCategoryBars(a, cur.label);
+}
+
+function renderCategoryBars(a, label) {
+  const m = METRICS[statMetric];
+  document.querySelectorAll('#metric-seg button').forEach(x => x.classList.toggle('active', x.dataset.m === statMetric));
+  $('#cat-period').textContent = `${label} · ${m.label}`;
+  const rows = Object.entries(a.cats).map(([cat, v]) => [cat, v[statMetric]]).filter(([, v]) => v > 0)
+    .sort((x, y) => y[1] - x[1]);
+  const total = rows.reduce((s, [, v]) => s + v, 0);
+  const max = Math.max(1, ...rows.map(([, v]) => v));
+  $('#cat-bars').innerHTML = rows.map(([cat, v]) => `
+    <li><span class="cat-name">${esc(cat)}</span>
+      <span class="cat-track"><i style="width:${(v / max) * 100}%"></i></span>
+      <span class="cat-val"><b>${fmt(v, m.digits)}</b> ${m.unit}<small>${fmt((v / total) * 100)}%</small></span></li>`).join('')
+    || `<li class="muted">${label}에 기록된 ${m.label}이(가) 없습니다.</li>`;
+}
+
+// 최근 12주: 위는 주간 합계 막대, 아래는 부위 × 주 히트맵 (한 가지 색의 진하기로 양 표현)
+function renderTrend() {
+  const m = METRICS[statMetric];
+  const thisWeek = weekStart(ymd(new Date()));
+  const weeks = [];
+  for (let i = 11; i >= 0; i--) {
+    const from = addDays(thisWeek, -7 * i);
+    weeks.push({ from, to: addDays(from, 6), agg: aggregate(from, addDays(from, 6)) });
+  }
+  const totals = weeks.map(w => Object.values(w.agg.cats).reduce((s, c) => s + c[statMetric], 0));
+  const tmax = Math.max(1, ...totals);
+  const cats = CATEGORIES.filter(c => weeks.some(w => (w.agg.cats[c] || {})[statMetric] > 0));
+  const cmax = Math.max(1, ...weeks.flatMap(w => cats.map(c => (w.agg.cats[c] || {})[statMetric] || 0)));
+  const wlabel = w => { const d = parseYmd(w.from); return `${d.getMonth() + 1}/${d.getDate()}`; };
+  const info = (w, what, v) => `${wlabel(w)} 주 · ${what} · ${fmt(v, m.digits)} ${m.unit}`;
+
+  let html = '<span class="tl"></span>' + weeks.map((w, i) => `
+    <button class="tbar" data-info="${esc(info(w, '합계', totals[i]))}" aria-label="${esc(info(w, '합계', totals[i]))}">
+      <i style="height:${(totals[i] / tmax) * 100}%"></i></button>`).join('');
+  for (const c of cats) {
+    html += `<span class="tl">${esc(c)}</span>` + weeks.map(w => {
+      const v = (w.agg.cats[c] || {})[statMetric] || 0;
+      const level = v ? Math.max(1, Math.ceil((v / cmax) * 5)) : 0;
+      return `<button class="hcell h${level}" data-info="${esc(info(w, c, v))}" aria-label="${esc(info(w, c, v))}"></button>`;
+    }).join('');
+  }
+  html += '<span class="tl"></span>' + weeks.map((w, i) =>
+    `<span class="wk">${i === 11 ? '이번' : i % 3 === 2 ? wlabel(w) : ''}</span>`).join('');
+  $('#trend').innerHTML = cats.length ? html : '<p class="muted">최근 12주 기록이 쌓이면 표시됩니다.</p>';
+  $('#trend-unit').textContent = `· ${m.label} (${m.unit})`;
+}
+
 function renderStats() {
+  renderPeriodStats();
+  renderTrend();
   const today = ymd(new Date());
   const days = [];
   for (let i = statRange - 1; i >= 0; i--) {
@@ -1571,7 +1721,7 @@ function renderWakeStatus() {
 
 // ---------- 새 버전 알림 ----------
 // 아이폰 홈 화면 앱은 닫지 않으면 예전 화면을 계속 띄우므로, 다시 볼 때 새 버전이 있는지 확인
-const APP_VERSION = '2026-10-24.11';
+const APP_VERSION = '2026-10-25.1';
 let updateCheckedAt = 0;
 
 async function checkForUpdate() {
@@ -1670,6 +1820,30 @@ $('#entry-delete').onclick = deleteDraft;
 
 $('#backdrop').onclick = closeSheets;
 document.querySelectorAll('.close-sheet').forEach(b => { b.onclick = closeSheets; });
+
+$('#period-seg').onclick = ev => {
+  const b = ev.target.closest('[data-p]');
+  if (!b) return;
+  statPeriod = b.dataset.p;
+  statOffset = 0;
+  renderPeriodStats();
+};
+$('#period-prev').onclick = () => { statOffset--; renderPeriodStats(); };
+$('#period-next').onclick = () => { if (statOffset < 0) { statOffset++; renderPeriodStats(); } };
+$('#metric-seg').onclick = ev => {
+  const b = ev.target.closest('[data-m]');
+  if (!b) return;
+  statMetric = b.dataset.m;
+  renderPeriodStats();
+  renderTrend();
+};
+$('#trend').onclick = ev => {
+  const c = ev.target.closest('[data-info]');
+  if (!c) return;
+  document.querySelectorAll('#trend .sel').forEach(x => x.classList.remove('sel'));
+  c.classList.add('sel');
+  $('#trend-info').textContent = c.dataset.info;
+};
 
 $('#range-seg').onclick = ev => {
   const b = ev.target.closest('button[data-range]');

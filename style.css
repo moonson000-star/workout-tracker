@@ -12,6 +12,7 @@
   --toast-bg: rgba(17,24,39,.92);
   --toast-fg: #ffffff;
   --on-accent: #ffffff;
+  --heat-1: #cde2fb; --heat-2: #9ec5f4; --heat-3: #6da7ec; --heat-4: #3987e5; --heat-5: #256abf;
   --warn-soft: #fef3c7;
   --warn: #b45309;
   --good: #16a34a;
@@ -32,6 +33,7 @@
     --toast-bg: rgba(229,231,235,.95);
     --toast-fg: #111827;
     --on-accent: #0b1020;
+    --heat-1: #104281; --heat-2: #1c5cab; --heat-3: #2a78d6; --heat-4: #5598e7; --heat-5: #9ec5f4;
     --warn-soft: #3b2a0c;
     --warn: #fbbf24;
     --good: #4ade80;
@@ -52,6 +54,7 @@
   --toast-bg: rgba(229,231,235,.95);
   --toast-fg: #111827;
   --on-accent: #0b1020;
+  --heat-1: #104281; --heat-2: #1c5cab; --heat-3: #2a78d6; --heat-4: #5598e7; --heat-5: #9ec5f4;
   --warn-soft: #3b2a0c;
   --warn: #fbbf24;
   --good: #4ade80;
@@ -421,3 +424,46 @@ textarea::placeholder, input::placeholder { color: var(--muted); opacity: .6; fo
   background: var(--accent-soft); color: var(--text); font-size: 14px;
 }
 .update-banner .btn { padding: 6px 12px; }
+
+/* 기간 통계 */
+.period-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.seg.small { margin: 0; }
+.seg.small button { padding: 5px 12px; font-size: 13px; }
+.period-nav { display: flex; align-items: center; gap: 2px; }
+.period-nav b { min-width: 92px; text-align: center; font-size: 15px; }
+.period-nav .icon-btn:disabled { opacity: .3; }
+.kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+.kpi { background: var(--bg); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.kpi span { font-size: 12px; color: var(--muted); }
+.kpi b { font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi b small { font-size: 11px; font-weight: 500; color: var(--muted); margin-left: 2px; }
+.delta { font-size: 11px; color: var(--muted); }
+.delta.up { color: var(--good); font-weight: 600; }
+.delta.new { color: var(--accent); }
+#kpi-note { margin: 8px 0 0; }
+
+.cat-bars { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 10px; }
+.cat-bars li { display: grid; grid-template-columns: 48px 1fr auto; align-items: center; gap: 8px; }
+.cat-name { font-size: 14px; }
+.cat-track { height: 14px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.cat-track i { display: block; height: 100%; background: var(--bar); border-radius: 0 4px 4px 0; min-width: 2px; }
+.cat-val { font-size: 12px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cat-val b { color: var(--text); font-size: 14px; }
+.cat-val small { display: block; font-size: 11px; }
+
+.trend-scroll { overflow-x: auto; margin-top: 8px; }
+.trend { display: grid; grid-template-columns: 44px repeat(12, minmax(18px, 1fr)); gap: 3px; align-items: end; min-width: 300px; }
+.trend .tl { font-size: 11px; color: var(--muted); align-self: center; white-space: nowrap; }
+.tbar { height: 64px; display: flex; align-items: flex-end; border: 0; padding: 0; background: transparent; cursor: pointer; }
+.tbar i { display: block; width: 100%; background: var(--bar); border-radius: 4px 4px 0 0; min-height: 2px; }
+.hcell { height: 22px; border: 0; border-radius: 4px; padding: 0; cursor: pointer; background: var(--bg); }
+.hcell.h1 { background: var(--heat-1); } .hcell.h2 { background: var(--heat-2); } .hcell.h3 { background: var(--heat-3); }
+.hcell.h4 { background: var(--heat-4); } .hcell.h5 { background: var(--heat-5); }
+.trend .sel { outline: 2px solid var(--text); outline-offset: 1px; }
+.tbar.sel { outline: none; } .tbar.sel i { background: var(--accent); }
+.trend .wk { font-size: 10px; color: var(--muted); text-align: center; white-space: nowrap; }
+.heat-legend { display: flex; align-items: center; gap: 3px; justify-content: flex-end; font-size: 11px; color: var(--muted); margin-top: 8px; }
+.heat-legend i { width: 14px; height: 10px; border-radius: 2px; display: inline-block; }
+.heat-legend .h1 { background: var(--heat-1); } .heat-legend .h2 { background: var(--heat-2); } .heat-legend .h3 { background: var(--heat-3); }
+.heat-legend .h4 { background: var(--heat-4); } .heat-legend .h5 { background: var(--heat-5); }
+.trend-info { font-size: 13px; margin: 6px 0 0; min-height: 1.4em; }
