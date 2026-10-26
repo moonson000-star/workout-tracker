@@ -467,3 +467,7 @@ textarea::placeholder, input::placeholder { color: var(--muted); opacity: .6; fo
 .heat-legend .h1 { background: var(--heat-1); } .heat-legend .h2 { background: var(--heat-2); } .heat-legend .h3 { background: var(--heat-3); }
 .heat-legend .h4 { background: var(--heat-4); } .heat-legend .h5 { background: var(--heat-5); }
 .trend-info { font-size: 13px; margin: 6px 0 0; min-height: 1.4em; }
+
+.act-fill { margin-top: 8px; }
+.act-missing { font-size: 12px; line-height: 1.5; color: var(--text); }
+.act-missing b { color: var(--accent); }

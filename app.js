@@ -321,16 +321,35 @@ function activityKcal(a, s) {
   return { kcal: useHealth ? Number(a.activeKcal) : fromSteps, km, fromSteps, useHealth };
 }
 
+// 보고 있는 날짜 직전 7일 중 걸음 기록이 빈 날 (걸음 기록을 한 번이라도 넣은 뒤부터 안내)
+function missingStepDays() {
+  const all = Object.keys(state.activity || {});
+  if (!all.length) return [];
+  const first = all.sort()[0];
+  const out = [];
+  for (let i = 1; i <= 7; i++) {
+    const d = addDays(currentDate, -i);
+    if (d >= first && !state.activity[d]) out.push(d);
+  }
+  return out;
+}
+
+const QUICK_PASTE = `<textarea class="act-quick" rows="1" aria-label="단축어 결과 붙여넣기"
+  placeholder="길게 눌러 붙여넣기 → 바로 저장"></textarea>`;
+
 function renderActivityCard() {
   const a = state.activity[currentDate];
   const box = $('#activity-card');
+  const missing = missingStepDays();
+  const missText = missing.length
+    ? `<small class="act-missing">⚠️ 최근 7일 중 ${missing.length}일(${missing.slice().reverse().map(d => d.slice(5).replace('-', '/')).join(', ')}) 걸음 기록이 비어 있어요. <b>7일치 단축어</b> 결과를 붙여넣으면 한 번에 채워집니다.</small>`
+    : '';
   if (!a) {
     box.innerHTML = `<div class="act-empty">
       <div class="act-empty-head"><span>🚶 걸음 수</span>
         <button class="chip" data-act="open">직접 입력</button></div>
-      <textarea class="act-quick" rows="1" aria-label="단축어 결과 붙여넣기"
-        placeholder="길게 눌러 붙여넣기 → 바로 저장"></textarea>
-      <small class="muted">단축어를 먼저 실행한 뒤 붙여넣으세요</small>
+      ${QUICK_PASTE}
+      ${missText || '<small class="muted">단축어를 먼저 실행한 뒤 붙여넣으세요</small>'}
     </div>`;
     return;
   }
@@ -338,7 +357,7 @@ function renderActivityCard() {
   box.innerHTML = `<button class="act-row" data-act="open" aria-label="걸음 수 수정">
     <span class="act-main">🚶 <b>${fmt(a.steps)}</b>걸음 <small class="muted">약 ${fmt(r.km, 1)}km</small></span>
     <span class="act-kcal"><b>${fmt(r.kcal)}</b> kcal<small>${r.useHealth ? '건강 앱 활동 에너지' : '걸음 기준 순소모'}</small></span>
-  </button>`;
+  </button>${missing.length ? `<div class="act-empty act-fill">${QUICK_PASTE}${missText}</div>` : ''}`;
 }
 
 let actDate = null;
@@ -380,7 +399,50 @@ function parseHealthText(text) {
   };
 }
 
+// 여러 날짜가 들어 있으면(7일치 단축어) 날짜마다 나눠서 읽음. 같은 날짜가 두 번 나오면 합침
+function parseHealthRecords(text) {
+  const t = String(text || '').replace(/[[\]()"'“”]/g, '');
+  const hits = [...t.matchAll(/(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})/g)];
+  const parts = hits.length > 1
+    ? hits.map((h, i) => t.slice(h.index, i + 1 < hits.length ? hits[i + 1].index : undefined))
+    : [t];
+  const byDate = {};
+  for (const part of parts) {
+    const r = parseHealthText(part);
+    if (r.steps == null && r.kcal == null) continue;
+    const key = r.date || '';
+    const cur = byDate[key] || (byDate[key] = { date: r.date, steps: null, kcal: null });
+    if (r.steps != null) cur.steps = r.steps;
+    if (r.kcal != null) cur.kcal = r.kcal;
+  }
+  return Object.values(byDate).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+}
+
+// 여러 날 저장: 기존 기록은 새 값으로 덮되, 새 값에 없는 항목(활동 에너지 등)은 유지
+function saveActivityRecords(records) {
+  for (const r of records) {
+    const date = r.date || currentDate;
+    const old = state.activity[date] || {};
+    state.activity[date] = {
+      steps: r.steps != null ? Math.round(r.steps) : (old.steps || 0),
+      activeKcal: r.kcal != null ? Math.round(r.kcal) : (old.activeKcal ?? null),
+      at: Date.now(),
+    };
+  }
+  save('all');
+  const dates = records.map(r => r.date || currentDate).sort();
+  const md = d => d.slice(5).replace('-', '/');
+  toast(`${records.length}일치 걸음을 저장했습니다 (${md(dates[0])}~${md(dates[dates.length - 1])})`);
+}
+
 function applyHealthText(text) {
+  const multi = parseHealthRecords(text);
+  if (multi.length > 1) {
+    saveActivityRecords(multi);
+    closeSheets();
+    renderDay();
+    return true;
+  }
   const r = parseHealthText(text);
   if (r.steps == null && r.kcal == null) {
     toast(/[가-힣]{2,}\s*[가-힣]*\]/.test(text) || /현재 날짜|합계\]/.test(text)
@@ -425,6 +487,13 @@ function saveActivity() {
 
 // 기록 화면 걸음 카드에서 바로 붙여넣기 → 저장
 function quickSaveActivity(text) {
+  const multi = parseHealthRecords(text);
+  if (multi.length > 1) {
+    saveActivityRecords(multi);
+    document.activeElement && document.activeElement.blur();
+    renderDay();
+    return true;
+  }
   const r = parseHealthText(text);
   if (r.steps == null && r.kcal == null) {
     toast('걸음 수를 찾지 못했습니다. 단축어를 실행한 뒤 다시 붙여넣어 주세요');
@@ -1721,7 +1790,7 @@ function renderWakeStatus() {
 
 // ---------- 새 버전 알림 ----------
 // 아이폰 홈 화면 앱은 닫지 않으면 예전 화면을 계속 띄우므로, 다시 볼 때 새 버전이 있는지 확인
-const APP_VERSION = '2026-10-25.1';
+const APP_VERSION = '2026-10-26.1';
 let updateCheckedAt = 0;
 
 async function checkForUpdate() {

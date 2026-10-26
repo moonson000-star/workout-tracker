@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="style.css?v=2026-10-25.1">
+  <link rel="stylesheet" href="style.css?v=2026-10-26.1">
 </head>
 <body>
   <header class="topbar">
@@ -433,15 +433,29 @@
         <li>동작 추가 → <b>클립보드에 복사</b></li>
         <li>처음 실행할 때 <b>건강 데이터 읽기 허용</b>을 눌러주세요</li>
       </ol>
-      <p>사용: 단축어 실행(위젯·뒷면 탭에 등록하면 편리) → 이 앱 열기 → <b>📋 단축어 결과 가져오기</b> → 저장.
+      <p>사용: 단축어 실행(위젯·뒷면 탭에 등록하면 편리) → 이 앱 열기 → 기록 화면의 걸음 칸에 길게 눌러 붙여넣기.
         <br>자동화 탭에서 "매일 밤 9시"에 이 단축어를 실행하도록 설정할 수도 있습니다.</p>
+    </details>
+    <details class="guide">
+      <summary>7일치 한 번에 가져오기 단축어 (빠뜨린 날 채우기)</summary>
+      <ol>
+        <li>새 단축어 → 이름 "운동기록 걸음 7일"</li>
+        <li><b>건강 샘플 찾기</b> · 유형 <b>걸음</b> · 필터: <b>시작일</b>이 <b>최근 7일</b> · 그룹화 <b>일</b></li>
+        <li><b>각 항목을 반복</b> (입력: 건강 샘플)</li>
+        <li>반복 안에 <b>텍스트</b>:
+          <code>wt;date=🔵반복 항목(시작 날짜);steps=🔵반복 항목(값)</code>
+          · 🔵반복 항목은 변수 선택으로 넣고, 넣은 변수를 한 번 더 눌러 <b>시작 날짜</b> / <b>값</b>을 고릅니다</li>
+        <li>반복 끝 아래에 <b>텍스트 결합</b> (입력: 반복 결과, 구분: 새로운 줄)</li>
+        <li><b>클립보드에 복사</b></li>
+      </ol>
+      <p>붙여넣으면 7일치가 날짜별로 한 번에 저장됩니다. 이미 있는 날은 새 값으로 바뀝니다.</p>
     </details>
   </div>
 
   <div class="toast hidden" id="toast"></div>
 
-  <script src="exercises.js?v=2026-10-25.1"></script>
-  <script src="calc.js?v=2026-10-25.1"></script>
-  <script src="app.js?v=2026-10-25.1"></script>
+  <script src="exercises.js?v=2026-10-26.1"></script>
+  <script src="calc.js?v=2026-10-26.1"></script>
+  <script src="app.js?v=2026-10-26.1"></script>
 </body>
 </html>
